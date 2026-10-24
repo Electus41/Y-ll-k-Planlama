@@ -409,7 +409,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     const SizedBox(height: 40),
                     const Divider(color: Colors.white24),
                     const SizedBox(height: 16),
-                    const Text('Teşkilat Üyeleri (Admin Yetkisi)',
+                    const Text('Teşkilat Üyeleri',
                         style: TextStyle(
                             color: Colors.white,
                             fontSize: 18,

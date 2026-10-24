@@ -7,11 +7,19 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 jobs:
   build-web-and-apk:
     name: Web Yayını ve APK Oluşturma
     runs-on: ubuntu-latest
+    
+    # GitHub Pages için gerekli ortam izinleri
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
       - name: Kodu Çek
         uses: actions/checkout@v4
@@ -27,11 +35,17 @@ jobs:
       - name: Web İçin Derle
         run: flutter build web --release --base-href "/Y-ll-k-Planlama/"
 
-      - name: Web Sürümünü GitHub Pages'e Yükle
-        uses: peaceiris/actions-gh-pages@v3
+      - name: GitHub Pages İçin Sayfayı Yapılandır
+        uses: actions/configure-pages@v4
+
+      - name: Web Dosyalarını Yüklemeye Hazırla
+        uses: actions/upload-pages-artifact@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./build/web
+          path: './build/web'
+
+      - name: Web Sürümünü GitHub Pages'e Yayınla
+        id: deployment
+        uses: actions/deploy-pages@v4
 
       - name: Android APK Derle
         run: flutter build apk --release
