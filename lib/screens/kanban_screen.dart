@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../core/constants.dart';
+import '../core/notification_service.dart';
 
 class KanbanScreen extends StatefulWidget {
   const KanbanScreen({super.key});
@@ -9,321 +10,170 @@ class KanbanScreen extends StatefulWidget {
 }
 
 class _KanbanScreenState extends State<KanbanScreen> {
-  final List<String> aylar = [
-    'Ocak',
-    'Şubat',
-    'Mart',
-    'Nisan',
-    'Mayıs',
-    'Haziran',
-    'Temmuz',
-    'Ağustos',
-    'Eylül',
-    'Ekim',
-    'Kasım',
-    'Aralık'
-  ];
+  String _seciliBirimFiltre = 'Tümü';
+  List<String> _birimListesi = ['Tümü'];
 
-  Future<void> _durumGuncelle(String id, String yeniDurum) async {
-    await supabase
-        .from('faaliyetler')
-        .update({'durum': yeniDurum}).eq('id', id);
-    setState(() {});
+  @override
+  void initState() {
+    super.initState();
+    _birimleriGetir();
   }
 
-  Future<void> _faaliyetSil(String id) async {
-    bool confirm = await showDialog(
-          context: context,
-          builder: (context) => AlertDialog(
-            backgroundColor: const Color(0xFF161C1A),
-            title: const Text('Silmek İstediğinize Emin Misiniz?',
-                style: TextStyle(color: Colors.white)),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('İptal',
-                      style: TextStyle(color: Colors.white54))),
-              ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.redAccent),
-                  onPressed: () => Navigator.pop(context, true),
-                  child:
-                      const Text('Sil', style: TextStyle(color: Colors.white))),
-            ],
-          ),
-        ) ??
-        false;
-    if (confirm) {
-      await supabase.from('faaliyetler').delete().eq('id', id);
-      if (mounted) setState(() {});
-    }
-  }
-
-  Future<void> _faaliyetEkleModalAc(
-      {Map<String, dynamic>? mevcutFaaliyet}) async {
-    List<String> dinamikBirimler = [];
+  Future<void> _birimleriGetir() async {
     try {
       final data =
           await supabase.from('birimler').select('ad').order('created_at');
-      dinamikBirimler = data.map((e) => e['ad'].toString()).toList();
-    } catch (e) {
-      debugPrint('Birimler çekilemedi: $e');
-    }
+      if (mounted) {
+        setState(() {
+          _birimListesi = ['Tümü', ...data.map((e) => e['ad'].toString())];
+        });
+      }
+    } catch (_) {}
+  }
 
-    if (dinamikBirimler.isEmpty) {
-      dinamikBirimler = ['Birim Bulunamadı (Önce Birim Ekleyin)'];
-    }
+  Future<void> _durumGuncelle(dynamic id, String yeniDurum) async {
+    await supabase
+        .from('faaliyetler')
+        .update({'durum': yeniDurum}).eq('id', id);
+  }
+
+  Future<void> _hizliGorevEkle(String varsayilanDurum) async {
+    final baslikCtrl = TextEditingController();
+    List<String> birimler = _birimListesi.where((b) => b != 'Tümü').toList();
+    if (birimler.isEmpty) birimler = ['Genel Yönetim'];
+    String seciliBirim = birimler.first;
+
+    List<Map<String, dynamic>> yoneticiler = [];
+    try {
+      final pData = await supabase
+          .from('profiller')
+          .select('id, ad, soyad, unvan')
+          .order('ad');
+      yoneticiler = List<Map<String, dynamic>>.from(pData);
+    } catch (_) {}
+
+    String? seciliKisiId =
+        yoneticiler.isNotEmpty ? yoneticiler.first['id'].toString() : null;
 
     if (!mounted) return;
 
-    final baslikController =
-        TextEditingController(text: mevcutFaaliyet?['baslik'] ?? '');
-    DateTime sTarih = DateTime.now();
-    if (mevcutFaaliyet != null && mevcutFaaliyet['tarih'] != null) {
-      try {
-        final parts = mevcutFaaliyet['tarih'].toString().split(' ');
-        if (parts.length == 3)
-          sTarih = DateTime(int.parse(parts[2]), aylar.indexOf(parts[1]) + 1,
-              int.parse(parts[0]));
-      } catch (_) {}
-    }
-    String seciliGun = sTarih.day.toString();
-    String seciliAy = aylar[sTarih.month - 1];
-    String seciliYil = sTarih.year.toString();
-    String durum = mevcutFaaliyet?['durum'] ?? 'Yapılacak';
-    String oncelik = mevcutFaaliyet?['oncelik'] ?? 'Normal';
-
-    String hedefBirim = mevcutFaaliyet?['hedef_birim'] ?? dinamikBirimler.first;
-    if (!dinamikBirimler.contains(hedefBirim))
-      hedefBirim = dinamikBirimler.first;
-
-    String secilenSorumlu =
-        mevcutFaaliyet?['olusturan_unvan'] ?? dinamikBirimler.first;
-    if (!dinamikBirimler.contains(secilenSorumlu))
-      secilenSorumlu = dinamikBirimler.first;
-
-    bool isUpdate = mevcutFaaliyet != null;
-
     showDialog(
       context: context,
-      builder: (modalContext) => Dialog(
-        backgroundColor: const Color(0xFF161C1A),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        insetPadding: const EdgeInsets.all(16),
-        child: StatefulBuilder(
-          builder: (context, setModalState) => SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(isUpdate ? 'Görevi Düzenle' : 'Yeni Görev Ekle',
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold)),
-                      IconButton(
-                          icon: const Icon(Icons.close, color: Colors.white54),
-                          onPressed: () => Navigator.pop(context))
-                    ]),
-                const SizedBox(height: 16),
-                TextField(
-                    controller: baslikController,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: InputDecoration(
-                        labelText: 'Görev Adı',
-                        filled: true,
-                        fillColor: const Color(0xFF1F2624),
-                        border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide: BorderSide.none),
-                        labelStyle: const TextStyle(color: Colors.white54))),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                        child: DropdownButtonFormField<String>(
-                            value: seciliGun,
-                            items: List.generate(31, (i) => (i + 1).toString())
-                                .map((e) =>
-                                    DropdownMenuItem(value: e, child: Text(e)))
-                                .toList(),
-                            onChanged: (val) =>
-                                setModalState(() => seciliGun = val!),
-                            dropdownColor: const Color(0xFF1F2624),
-                            style: const TextStyle(color: Colors.white),
-                            decoration: InputDecoration(
-                                filled: true,
-                                fillColor: const Color(0xFF1F2624),
-                                border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                    borderSide: BorderSide.none)))),
-                    const SizedBox(width: 4),
-                    Expanded(
-                        flex: 2,
-                        child: DropdownButtonFormField<String>(
-                            value: seciliAy,
-                            items: aylar
-                                .map((e) =>
-                                    DropdownMenuItem(value: e, child: Text(e)))
-                                .toList(),
-                            onChanged: (val) =>
-                                setModalState(() => seciliAy = val!),
-                            dropdownColor: const Color(0xFF1F2624),
-                            style: const TextStyle(color: Colors.white),
-                            decoration: InputDecoration(
-                                filled: true,
-                                fillColor: const Color(0xFF1F2624),
-                                border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                    borderSide: BorderSide.none)))),
-                    const SizedBox(width: 4),
-                    Expanded(
-                        child: DropdownButtonFormField<String>(
-                            value: seciliYil,
-                            items: ['2026', '2027', '2028', '2029']
-                                .map((e) =>
-                                    DropdownMenuItem(value: e, child: Text(e)))
-                                .toList(),
-                            onChanged: (val) =>
-                                setModalState(() => seciliYil = val!),
-                            dropdownColor: const Color(0xFF1F2624),
-                            style: const TextStyle(color: Colors.white),
-                            decoration: InputDecoration(
-                                filled: true,
-                                fillColor: const Color(0xFF1F2624),
-                                border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                    borderSide: BorderSide.none)))),
-                  ],
-                ),
-                const SizedBox(height: 16),
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setModalState) => AlertDialog(
+          backgroundColor: const Color(0xFF161C1A),
+          title: Text('$varsayilanDurum Sütununa Ekle',
+              style: const TextStyle(color: Colors.white, fontSize: 16)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: baslikCtrl,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                    labelText: 'Görev Başlığı',
+                    labelStyle: TextStyle(color: Colors.white54)),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: seciliBirim,
+                dropdownColor: AppColors.inputFill,
+                style: const TextStyle(color: Colors.white),
+                items: birimler
+                    .map((b) => DropdownMenuItem(value: b, child: Text(b)))
+                    .toList(),
+                onChanged: (v) => setModalState(() => seciliBirim = v!),
+                decoration: const InputDecoration(
+                    labelText: 'Birim',
+                    labelStyle: TextStyle(color: Colors.white54)),
+              ),
+              if (yoneticiler.isNotEmpty) ...[
+                const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
-                    value: hedefBirim,
-                    items: dinamikBirimler
-                        .map((e) => DropdownMenuItem(value: e, child: Text(e)))
-                        .toList(),
-                    onChanged: (val) => setModalState(() => hedefBirim = val!),
-                    dropdownColor: const Color(0xFF1F2624),
-                    style: const TextStyle(color: Colors.white),
-                    decoration: InputDecoration(
-                        labelText: 'Sorumlu Birim / Komisyon',
-                        filled: true,
-                        fillColor: const Color(0xFF1F2624),
-                        border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide: BorderSide.none),
-                        labelStyle: const TextStyle(color: Colors.white54))),
-                const SizedBox(height: 16),
-                DropdownButtonFormField<String>(
-                    value: secilenSorumlu,
-                    items: dinamikBirimler
-                        .map((e) => DropdownMenuItem(value: e, child: Text(e)))
-                        .toList(),
-                    onChanged: (val) =>
-                        setModalState(() => secilenSorumlu = val!),
-                    dropdownColor: const Color(0xFF1F2624),
-                    style: const TextStyle(color: Colors.white),
-                    decoration: InputDecoration(
-                        labelText: 'Görevi Oluşturan / Yetkili',
-                        filled: true,
-                        fillColor: const Color(0xFF1F2624),
-                        border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide: BorderSide.none),
-                        labelStyle: const TextStyle(color: Colors.white54))),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                        child: DropdownButtonFormField<String>(
-                            value: durum,
-                            items: ['Yapılacak', 'Yapılıyor', 'Tamamlandı']
-                                .map((e) =>
-                                    DropdownMenuItem(value: e, child: Text(e)))
-                                .toList(),
-                            onChanged: (val) =>
-                                setModalState(() => durum = val!),
-                            dropdownColor: const Color(0xFF1F2624),
-                            style: const TextStyle(color: Colors.white),
-                            decoration: InputDecoration(
-                                labelText: 'Durum',
-                                filled: true,
-                                fillColor: const Color(0xFF1F2624),
-                                border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                    borderSide: BorderSide.none),
-                                labelStyle:
-                                    const TextStyle(color: Colors.white54)))),
-                    const SizedBox(width: 8),
-                    Expanded(
-                        child: DropdownButtonFormField<String>(
-                            value: oncelik,
-                            items: ['Acil', 'Normal', 'Düşük']
-                                .map((e) =>
-                                    DropdownMenuItem(value: e, child: Text(e)))
-                                .toList(),
-                            onChanged: (val) =>
-                                setModalState(() => oncelik = val!),
-                            dropdownColor: const Color(0xFF1F2624),
-                            style: const TextStyle(color: Colors.white),
-                            decoration: InputDecoration(
-                                labelText: 'Öncelik',
-                                filled: true,
-                                fillColor: const Color(0xFF1F2624),
-                                border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                    borderSide: BorderSide.none),
-                                labelStyle:
-                                    const TextStyle(color: Colors.white54)))),
-                  ],
-                ),
-                const SizedBox(height: 24),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF69F0AE),
-                      foregroundColor: Colors.black,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10)),
-                      padding: const EdgeInsets.symmetric(vertical: 14)),
-                  onPressed: () async {
-                    if (baslikController.text.isNotEmpty) {
-                      String tarihStr = '$seciliGun $seciliAy $seciliYil';
-                      if (isUpdate) {
-                        await supabase.from('faaliyetler').update({
-                          'baslik': baslikController.text,
-                          'tarih': tarihStr,
-                          'durum': durum,
-                          'oncelik': oncelik,
-                          'hedef_birim': hedefBirim,
-                          'olusturan_unvan': secilenSorumlu
-                        }).eq('id', mevcutFaaliyet['id']);
-                      } else {
-                        await supabase.from('faaliyetler').insert({
-                          'baslik': baslikController.text,
-                          'tarih': tarihStr,
-                          'durum': durum,
-                          'kategori': 'Eğitim',
-                          'oncelik': oncelik,
-                          'hedef_birim': hedefBirim,
-                          'olusturan_unvan': secilenSorumlu
-                        });
-                      }
-                      if (!context.mounted) return;
-                      Navigator.pop(context);
-                      setState(() {});
-                    }
-                  },
-                  child: const Text('Kaydet',
-                      style:
-                          TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                  value: seciliKisiId,
+                  isExpanded: true,
+                  dropdownColor: AppColors.inputFill,
+                  style: const TextStyle(color: Colors.white),
+                  items: yoneticiler.map((y) {
+                    final ad = '${y['ad'] ?? ''} ${y['soyad'] ?? ''}'.trim();
+                    return DropdownMenuItem(
+                        value: y['id'].toString(),
+                        child: Text(ad.isEmpty ? 'Yönetici' : ad,
+                            overflow: TextOverflow.ellipsis));
+                  }).toList(),
+                  onChanged: (v) => setModalState(() => seciliKisiId = v),
+                  decoration: const InputDecoration(
+                      labelText: 'Atanan Kişi',
+                      labelStyle: TextStyle(color: Colors.white54)),
                 ),
               ],
-            ),
+            ],
           ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('İptal',
+                    style: TextStyle(color: Colors.white54))),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.accent,
+                  foregroundColor: Colors.black),
+              onPressed: () async {
+                if (baslikCtrl.text.trim().isEmpty) return;
+                final bugun = DateTime.now();
+                const aylar = [
+                  'Ocak',
+                  'Şubat',
+                  'Mart',
+                  'Nisan',
+                  'Mayıs',
+                  'Haziran',
+                  'Temmuz',
+                  'Ağustos',
+                  'Eylül',
+                  'Ekim',
+                  'Kasım',
+                  'Aralık'
+                ];
+                final tarihStr =
+                    '${bugun.day} ${aylar[bugun.month - 1]} ${bugun.year}';
+
+                String sorumluAdi = seciliBirim;
+                if (seciliKisiId != null && yoneticiler.isNotEmpty) {
+                  final p = yoneticiler
+                      .firstWhere((e) => e['id'].toString() == seciliKisiId);
+                  sorumluAdi =
+                      '${p['ad'] ?? ''} ${p['soyad'] ?? ''} (${p['unvan'] ?? ''})'
+                          .trim();
+                }
+
+                await supabase.from('faaliyetler').insert({
+                  'baslik': baslikCtrl.text.trim(),
+                  'tarih': tarihStr,
+                  'durum': varsayilanDurum,
+                  'oncelik': 'Normal',
+                  'kategori': 'Genel',
+                  'hedef_birim': seciliBirim,
+                  'olusturan_unvan': sorumluAdi,
+                  'atanan_kisi_id': seciliKisiId,
+                });
+
+                if (seciliKisiId != null) {
+                  await NotificationService.gorevBildirimiGonder(
+                    hedefKullaniciId: seciliKisiId!,
+                    faaliyetBaslik: baslikCtrl.text.trim(),
+                    tarih: tarihStr,
+                    birim: seciliBirim,
+                  );
+                }
+
+                if (!context.mounted) return;
+                Navigator.pop(context);
+              },
+              child: const Text('Ekle',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ],
         ),
       ),
     );
@@ -331,186 +181,190 @@ class _KanbanScreenState extends State<KanbanScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF121816),
-      appBar: AppBar(
-          title: const Text('Kanban Panosu',
-              style: TextStyle(color: Colors.white)),
-          backgroundColor: const Color(0xFF1B4D3E),
-          iconTheme: const IconThemeData(color: Colors.white)),
-      body: StreamBuilder<List<Map<String, dynamic>>>(
-        stream: supabase
-            .from('faaliyetler')
-            .stream(primaryKey: ['id'])
-            .order('created_at', ascending: false)
-            .map((maps) => List<Map<String, dynamic>>.from(maps)),
-        builder: (context, snapshot) {
-          if (!snapshot.hasData)
-            return const Center(
-                child: CircularProgressIndicator(color: Color(0xFF69F0AE)));
-
-          final faaliyetler = snapshot.data!;
-          final yapilacaklar =
-              faaliyetler.where((f) => f['durum'] == 'Yapılacak').toList();
-          final yapilanlar =
-              faaliyetler.where((f) => f['durum'] == 'Yapılıyor').toList();
-          final tamamlananlar =
-              faaliyetler.where((f) => f['durum'] == 'Tamamlandı').toList();
-
-          return Padding(
-            padding: const EdgeInsets.all(12.0),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _kanbanSutun(
-                    context, 'Yapılacak', yapilacaklar, Colors.lightBlueAccent),
-                const SizedBox(width: 12),
-                _kanbanSutun(
-                    context, 'Yapılıyor', yapilanlar, Colors.orangeAccent),
-                const SizedBox(width: 12),
-                _kanbanSutun(
-                    context, 'Tamamlandı', tamamlananlar, Colors.greenAccent),
-              ],
-            ),
-          );
-        },
-      ),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: const Color(0xFF69F0AE),
-        foregroundColor: Colors.black,
-        onPressed: () => _faaliyetEkleModalAc(),
-        child: const Icon(Icons.add),
-      ),
-    );
-  }
-
-  Widget _kanbanSutun(BuildContext context, String baslik,
-      List<Map<String, dynamic>> liste, Color renk) {
-    return Expanded(
-      child: DragTarget<Map<String, dynamic>>(
-        onAccept: (item) {
-          if (item['durum'] != baslik)
-            _durumGuncelle(item['id'].toString(), baslik);
-        },
-        builder: (context, candidateData, rejectedData) {
-          return Container(
-            decoration: BoxDecoration(
-                color: const Color(0xFF1A2220),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                    color: candidateData.isNotEmpty
-                        ? renk
-                        : Colors.white.withValues(alpha: 0.1),
-                    width: candidateData.isNotEmpty ? 2 : 1)),
-            child: Column(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                      color: renk.withValues(alpha: 0.15),
-                      borderRadius: const BorderRadius.only(
-                          topLeft: Radius.circular(12),
-                          topRight: Radius.circular(12))),
-                  child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(baslik,
-                            style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: renk,
-                                fontSize: 15)),
-                        Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 2),
-                            decoration: BoxDecoration(
-                                color: renk.withValues(alpha: 0.3),
-                                borderRadius: BorderRadius.circular(10)),
-                            child: Text('${liste.length}',
-                                style: TextStyle(
-                                    color: renk,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12)))
-                      ]),
-                ),
-                Expanded(
-                  child: ListView.builder(
-                    padding: const EdgeInsets.all(8),
-                    itemCount: liste.length,
-                    itemBuilder: (context, index) {
-                      final item = liste[index];
-                      return Draggable<Map<String, dynamic>>(
-                        data: item,
-                        feedback: Material(
-                            color: Colors.transparent,
-                            child: SizedBox(
-                                width:
-                                    MediaQuery.of(context).size.width / 3 - 24,
-                                child:
-                                    _gorevKarti(item, renk, isDragging: true))),
-                        childWhenDragging: Opacity(
-                            opacity: 0.3, child: _gorevKarti(item, renk)),
-                        child: _gorevKarti(item, renk),
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _gorevKarti(Map<String, dynamic> item, Color renk,
-      {bool isDragging = false}) {
-    return Card(
-      color: const Color(0xFF222B29),
-      elevation: isDragging ? 8 : 2,
-      margin: const EdgeInsets.only(bottom: 8),
-      shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8),
-          side: BorderSide(
-              color: isDragging ? renk : Colors.white.withValues(alpha: 0.05),
-              width: isDragging ? 2 : 1)),
-      child: Padding(
-        padding: const EdgeInsets.all(12.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    return DefaultTabController(
+      length: 3,
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        appBar: AppBar(
+          title: const Text('Kanban İş Takibi',
+              style: TextStyle(color: Colors.white, fontSize: 16)),
+          backgroundColor: AppColors.secondary,
+          iconTheme: const IconThemeData(color: Colors.white),
+          bottom: const TabBar(
+            indicatorColor: AppColors.accent,
+            labelColor: AppColors.accent,
+            unselectedLabelColor: Colors.white60,
+            tabs: [
+              Tab(text: 'Yapılacak'),
+              Tab(text: 'Yapılıyor'),
+              Tab(text: 'Tamamlandı'),
+            ],
+          ),
+        ),
+        body: Column(
           children: [
-            Text(item['baslik'] ?? '',
-                style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white)),
-            const SizedBox(height: 8),
-            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              Text('📅 ${item['tarih'] ?? ''}',
-                  style: const TextStyle(fontSize: 11, color: Colors.white54)),
-              Text('👤 ${item['olusturan_unvan'] ?? ''}',
-                  style:
-                      const TextStyle(fontSize: 11, color: Colors.tealAccent))
-            ]),
-            if (!isDragging) ...[
-              const Divider(color: Colors.white12, height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: AppColors.card,
+              child: Row(
                 children: [
-                  InkWell(
-                      onTap: () => _faaliyetEkleModalAc(mevcutFaaliyet: item),
-                      child: const Icon(Icons.edit,
-                          size: 16, color: Colors.blueAccent)),
-                  const SizedBox(width: 16),
-                  InkWell(
-                      onTap: () => _faaliyetSil(item['id'].toString()),
-                      child: const Icon(Icons.delete,
-                          size: 16, color: Colors.redAccent)),
+                  const Icon(Icons.filter_list,
+                      color: AppColors.accent, size: 18),
+                  const SizedBox(width: 8),
+                  const Text('Birim Filtresi:',
+                      style: TextStyle(color: Colors.white70, fontSize: 13)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: _birimListesi.contains(_seciliBirimFiltre)
+                            ? _seciliBirimFiltre
+                            : 'Tümü',
+                        dropdownColor: AppColors.inputFill,
+                        style:
+                            const TextStyle(color: Colors.white, fontSize: 13),
+                        items: _birimListesi
+                            .map((b) =>
+                                DropdownMenuItem(value: b, child: Text(b)))
+                            .toList(),
+                        onChanged: (v) =>
+                            setState(() => _seciliBirimFiltre = v!),
+                      ),
+                    ),
+                  ),
                 ],
-              )
-            ]
+              ),
+            ),
+            Expanded(
+              child: StreamBuilder<List<Map<String, dynamic>>>(
+                stream: supabase.from('faaliyetler').stream(
+                    primaryKey: ['id']).order('created_at', ascending: false),
+                builder: (context, snapshot) {
+                  if (!snapshot.hasData) {
+                    return const Center(
+                        child:
+                            CircularProgressIndicator(color: AppColors.accent));
+                  }
+
+                  var tumListe = snapshot.data!;
+                  if (_seciliBirimFiltre != 'Tümü') {
+                    tumListe = tumListe
+                        .where((f) => f['hedef_birim'] == _seciliBirimFiltre)
+                        .toList();
+                  }
+
+                  return TabBarView(
+                    children: [
+                      _sutunOlustur(
+                          tumListe, 'Yapılacak', Colors.lightBlueAccent),
+                      _sutunOlustur(tumListe, 'Yapılıyor', Colors.orangeAccent),
+                      _sutunOlustur(tumListe, 'Tamamlandı', Colors.greenAccent),
+                    ],
+                  );
+                },
+              ),
+            ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _sutunOlustur(
+      List<Map<String, dynamic>> tumListe, String durumAdi, Color vurguRengi) {
+    final liste = tumListe.where((f) => f['durum'] == durumAdi).toList();
+
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      floatingActionButton: FloatingActionButton.extended(
+        heroTag: durumAdi,
+        backgroundColor: AppColors.accent,
+        foregroundColor: Colors.black,
+        onPressed: () => _hizliGorevEkle(durumAdi),
+        icon: const Icon(Icons.add),
+        label: const Text('Görev Ekle',
+            style: TextStyle(fontWeight: FontWeight.bold)),
+      ),
+      body: liste.isEmpty
+          ? Center(
+              child: Text('$durumAdi aşamasında görev yok.',
+                  style: const TextStyle(color: Colors.white54)))
+          : ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: liste.length,
+              itemBuilder: (context, index) {
+                final f = liste[index];
+                return Card(
+                  color: AppColors.card,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: BorderSide(color: vurguRengi.withValues(alpha: 0.4)),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(f['baslik'] ?? '',
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 15,
+                                fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 6),
+                        Text(
+                            '🏢 ${f['hedef_birim'] ?? '-'}  |  📅 ${f['tarih'] ?? '-'}',
+                            style: const TextStyle(
+                                color: Colors.white70, fontSize: 12)),
+                        const SizedBox(height: 4),
+                        Text('👤 ${f['olusturan_unvan'] ?? '-'}',
+                            style: const TextStyle(
+                                color: AppColors.accent, fontSize: 12)),
+                        const Divider(color: Colors.white12, height: 18),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            if (durumAdi != 'Yapılacak')
+                              TextButton.icon(
+                                onPressed: () =>
+                                    _durumGuncelle(f['id'], 'Yapılacak'),
+                                icon: const Icon(Icons.undo,
+                                    size: 16, color: Colors.lightBlueAccent),
+                                label: const Text('Yapılacak',
+                                    style: TextStyle(
+                                        color: Colors.lightBlueAccent,
+                                        fontSize: 12)),
+                              ),
+                            if (durumAdi != 'Yapılıyor')
+                              TextButton.icon(
+                                onPressed: () =>
+                                    _durumGuncelle(f['id'], 'Yapılıyor'),
+                                icon: const Icon(Icons.play_arrow,
+                                    size: 16, color: Colors.orangeAccent),
+                                label: const Text('Yapılıyor',
+                                    style: TextStyle(
+                                        color: Colors.orangeAccent,
+                                        fontSize: 12)),
+                              ),
+                            if (durumAdi != 'Tamamlandı')
+                              TextButton.icon(
+                                onPressed: () =>
+                                    _durumGuncelle(f['id'], 'Tamamlandı'),
+                                icon: const Icon(Icons.check_circle,
+                                    size: 16, color: Colors.greenAccent),
+                                label: const Text('Tamamla',
+                                    style: TextStyle(
+                                        color: Colors.greenAccent,
+                                        fontSize: 12)),
+                              ),
+                          ],
+                        )
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
     );
   }
 }

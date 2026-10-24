@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../core/constants.dart';
+import '../core/notification_service.dart';
 import 'activities_screen.dart';
 import 'register_screen.dart';
 
@@ -13,8 +15,28 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _sifreController = TextEditingController();
-  bool _beniHatirla = false;
+  bool _beniHatirla = true;
   bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _kayitliBilgileriYukle();
+  }
+
+  Future<void> _kayitliBilgileriYukle() async {
+    final prefs = await SharedPreferences.getInstance();
+    final kayitliEmail = prefs.getString('kayitli_email') ?? '';
+    final hatirla = prefs.getBool('beni_hatirla') ?? true;
+    if (mounted) {
+      setState(() {
+        _beniHatirla = hatirla;
+        if (hatirla && kayitliEmail.isNotEmpty) {
+          _emailController.text = kayitliEmail;
+        }
+      });
+    }
+  }
 
   InputDecoration _koyuInputDekorasyonu(
       {required String label, required IconData icon}) {
@@ -24,13 +46,15 @@ class _LoginScreenState extends State<LoginScreen> {
       prefixIcon:
           Icon(icon, color: Colors.tealAccent.withValues(alpha: 0.7), size: 20),
       filled: true,
-      fillColor: const Color(0xFF1F2624),
-      border: const OutlineInputBorder(),
-      enabledBorder: const OutlineInputBorder(
-        borderSide: BorderSide(color: Colors.white30),
+      fillColor: AppColors.inputFill,
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Colors.white30),
       ),
-      focusedBorder: const OutlineInputBorder(
-        borderSide: BorderSide(color: Color(0xFF69F0AE), width: 2),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: AppColors.accent, width: 2),
       ),
     );
   }
@@ -52,7 +76,18 @@ class _LoginScreenState extends State<LoginScreen> {
         email: _emailController.text.trim(),
         password: _sifreController.text.trim(),
       );
+
       if (authResponse.user != null) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('beni_hatirla', _beniHatirla);
+        if (_beniHatirla) {
+          await prefs.setString('kayitli_email', _emailController.text.trim());
+        } else {
+          await prefs.remove('kayitli_email');
+        }
+
+        await NotificationService.kullaniciCihaziniSenkronizeEt();
+
         if (!mounted) return;
         Navigator.pushReplacement(
           context,
@@ -65,8 +100,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (hataStr.contains('over_email_send_rate_limit') ||
           hataStr.contains('429')) {
-        kullaniciMesaji =
-            'Çok fazla başarısız deneme yapıldı. Lütfen biraz bekleyin.';
+        kullaniciMesaji = 'Çok fazla deneme yapıldı. Lütfen biraz bekleyin.';
       } else if (hataStr.contains('email not confirmed')) {
         kullaniciMesaji = 'E-posta adresiniz henüz onaylanmamış.';
       }
@@ -83,7 +117,8 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _sifremiUnuttumModalAc() {
-    final resetEmailController = TextEditingController();
+    final resetEmailController =
+        TextEditingController(text: _emailController.text.trim());
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -94,18 +129,16 @@ class _LoginScreenState extends State<LoginScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             const Text(
-                'Şifre sıfırlama talimatlarını almak için e-posta adresinizi girin.',
-                style: TextStyle(color: Colors.white70)),
+              'Şifre sıfırlama talimatlarını almak için e-posta adresinizi girin.',
+              style: TextStyle(color: Colors.white70),
+            ),
             const SizedBox(height: 12),
             TextField(
-                controller: resetEmailController,
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(
-                    labelText: 'E-posta Adresi',
-                    labelStyle: TextStyle(color: Colors.white54),
-                    border: OutlineInputBorder(),
-                    enabledBorder: OutlineInputBorder(
-                        borderSide: BorderSide(color: Colors.white30)))),
+              controller: resetEmailController,
+              style: const TextStyle(color: Colors.white),
+              decoration: _koyuInputDekorasyonu(
+                  label: 'E-posta Adresi', icon: Icons.email_outlined),
+            ),
           ],
         ),
         actions: [
@@ -115,9 +148,11 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF69F0AE),
-                foregroundColor: Colors.black),
+              backgroundColor: AppColors.accent,
+              foregroundColor: Colors.black,
+            ),
             onPressed: () async {
+              if (resetEmailController.text.trim().isEmpty) return;
               try {
                 await supabase.auth
                     .resetPasswordForEmail(resetEmailController.text.trim());
@@ -125,17 +160,19 @@ class _LoginScreenState extends State<LoginScreen> {
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                      content: Text(
-                          'Şifre sıfırlama bağlantısı e-posta adresinize gönderildi.'),
-                      backgroundColor: Colors.green),
+                    content: Text(
+                        'Şifre sıfırlama bağlantısı e-posta adresinize gönderildi.'),
+                    backgroundColor: Colors.green,
+                  ),
                 );
               } catch (err) {
                 if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                      content: Text(
-                          'Sıfırlama bağlantısı gönderilemedi. E-postayı kontrol edin.'),
-                      backgroundColor: Colors.red),
+                    content: Text(
+                        'Sıfırlama bağlantısı gönderilemedi. E-postayı kontrol edin.'),
+                    backgroundColor: Colors.red,
+                  ),
                 );
               }
             },
@@ -150,11 +187,11 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF121816),
+      backgroundColor: AppColors.background,
       appBar: AppBar(
         title: const Text('Kocaeli Genç İHH - Giriş',
-            style: TextStyle(color: Colors.white)),
-        backgroundColor: const Color(0xFF1B4D3E),
+            style: TextStyle(color: Colors.white, fontSize: 16)),
+        backgroundColor: AppColors.secondary,
         elevation: 0,
       ),
       body: Padding(
@@ -166,8 +203,7 @@ class _LoginScreenState extends State<LoginScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const SizedBox(height: 20),
-                  // BÜYÜTÜLMÜŞ LOGO VE BEYAZ ARKAPLAN / PARILTI EFEKTİ
+                  const SizedBox(height: 12),
                   Container(
                     padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(
@@ -175,7 +211,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       shape: BoxShape.circle,
                       boxShadow: [
                         BoxShadow(
-                          color: const Color(0xFF69F0AE).withValues(alpha: 0.3),
+                          color: AppColors.accent.withValues(alpha: 0.35),
                           blurRadius: 35,
                           spreadRadius: 8,
                         )
@@ -183,19 +219,16 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     child: Image.asset('assets/images/logo.png', height: 95),
                   ),
-                  const SizedBox(height: 32),
-
+                  const SizedBox(height: 28),
                   TextField(
                     controller: _emailController,
+                    keyboardType: TextInputType.emailAddress,
                     style: const TextStyle(color: Colors.white),
                     textInputAction: TextInputAction.next,
                     decoration: _koyuInputDekorasyonu(
-                      label: 'E-posta Adresi',
-                      icon: Icons.email_outlined,
-                    ),
+                        label: 'E-posta Adresi', icon: Icons.email_outlined),
                   ),
                   const SizedBox(height: 16),
-
                   TextField(
                     controller: _sifreController,
                     style: const TextStyle(color: Colors.white),
@@ -203,12 +236,9 @@ class _LoginScreenState extends State<LoginScreen> {
                     onSubmitted: (_) => _girisYap(),
                     obscureText: true,
                     decoration: _koyuInputDekorasyonu(
-                      label: 'Şifre',
-                      icon: Icons.lock_outline,
-                    ),
+                        label: 'Şifre', icon: Icons.lock_outline),
                   ),
                   const SizedBox(height: 12),
-
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -216,14 +246,11 @@ class _LoginScreenState extends State<LoginScreen> {
                         children: [
                           Checkbox(
                             value: _beniHatirla,
-                            activeColor: const Color(0xFF69F0AE),
+                            activeColor: AppColors.accent,
                             checkColor: Colors.black,
                             side: const BorderSide(color: Colors.white54),
-                            onChanged: (val) {
-                              setState(() {
-                                _beniHatirla = val ?? false;
-                              });
-                            },
+                            onChanged: (val) =>
+                                setState(() => _beniHatirla = val ?? false),
                           ),
                           const Text('Beni hatırla',
                               style: TextStyle(color: Colors.white70)),
@@ -237,20 +264,17 @@ class _LoginScreenState extends State<LoginScreen> {
                     ],
                   ),
                   const SizedBox(height: 24),
-
                   _isLoading
-                      ? const CircularProgressIndicator(
-                          color: Color(0xFF69F0AE))
+                      ? const CircularProgressIndicator(color: AppColors.accent)
                       : SizedBox(
                           width: double.infinity,
                           height: 52,
                           child: ElevatedButton(
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF69F0AE),
+                              backgroundColor: AppColors.accent,
                               foregroundColor: Colors.black,
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
+                                  borderRadius: BorderRadius.circular(12)),
                             ),
                             onPressed: _girisYap,
                             child: const Text('Giriş Yap',
@@ -259,7 +283,6 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ),
                   const SizedBox(height: 16),
-
                   TextButton(
                     onPressed: () {
                       Navigator.push(
@@ -271,7 +294,6 @@ class _LoginScreenState extends State<LoginScreen> {
                     child: const Text('Hesabınız yok mu? Kayıt Olun',
                         style: TextStyle(color: Colors.tealAccent)),
                   ),
-                  const SizedBox(height: 20),
                 ],
               ),
             ),

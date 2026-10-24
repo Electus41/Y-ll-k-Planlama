@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../core/constants.dart';
+import '../core/notification_service.dart';
 import 'academy_calendar_screen.dart';
 import 'kanban_screen.dart';
 import 'pdf_screen.dart';
@@ -32,7 +33,6 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
     'Aralık'
   ];
 
-  // Hint yerine Label kullanıldı, böylece başlıklar kaybolmaz
   InputDecoration _koyuInputDekorasyonu(
       {required String label, required IconData icon}) {
     return InputDecoration(
@@ -41,7 +41,7 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
       prefixIcon:
           Icon(icon, color: Colors.tealAccent.withValues(alpha: 0.7), size: 20),
       filled: true,
-      fillColor: const Color(0xFF1F2624),
+      fillColor: AppColors.inputFill,
       border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
       contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
@@ -57,12 +57,12 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
       items:
           items.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
       onChanged: onChanged,
-      dropdownColor: const Color(0xFF1F2624),
+      dropdownColor: AppColors.inputFill,
       icon: const Icon(Icons.arrow_drop_down, color: Colors.white54),
       style: const TextStyle(color: Colors.white, fontSize: 14),
       decoration: InputDecoration(
         filled: true,
-        fillColor: const Color(0xFF1F2624),
+        fillColor: AppColors.inputFill,
         border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
             borderSide: BorderSide.none),
@@ -97,26 +97,39 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
 
     if (confirm) {
       await supabase.from('faaliyetler').delete().eq('id', id);
-      if (mounted) setState(() {});
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Faaliyet silindi.'), backgroundColor: Colors.red));
+      if (mounted) {
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Faaliyet silindi.'), backgroundColor: Colors.red));
+      }
     }
   }
 
-  // MODAL AÇILIRKEN VERİTABANINDAN BİRİMLERİ DİNAMİK ÇEKİYORUZ
   Future<void> _faaliyetEkleModalAc(
       {Map<String, dynamic>? mevcutFaaliyet}) async {
     List<String> dinamikBirimler = [];
+    List<Map<String, dynamic>> yoneticiler = [];
+
     try {
-      final data =
+      final birimData =
           await supabase.from('birimler').select('ad').order('created_at');
-      dinamikBirimler = data.map((e) => e['ad'].toString()).toList();
+      dinamikBirimler = birimData.map((e) => e['ad'].toString()).toList();
     } catch (e) {
       debugPrint('Birimler çekilemedi: $e');
     }
 
+    try {
+      final profilData = await supabase
+          .from('profiller')
+          .select('id, ad, soyad, unvan')
+          .order('ad');
+      yoneticiler = List<Map<String, dynamic>>.from(profilData);
+    } catch (e) {
+      debugPrint('Profiller çekilemedi: $e');
+    }
+
     if (dinamikBirimler.isEmpty) {
-      dinamikBirimler = ['Birim Bulunamadı (Önce Birim Ekleyin)'];
+      dinamikBirimler = ['Genel Yönetim'];
     }
 
     if (!mounted) return;
@@ -128,29 +141,39 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
     if (mevcutFaaliyet != null && mevcutFaaliyet['tarih'] != null) {
       try {
         final parts = mevcutFaaliyet['tarih'].toString().split(' ');
-        if (parts.length == 3)
-          sTarih = DateTime(int.parse(parts[2]), aylar.indexOf(parts[1]) + 1,
-              int.parse(parts[0]));
+        if (parts.length == 3) {
+          final ayIndex = aylar.indexOf(parts[1]);
+          if (ayIndex != -1) {
+            sTarih =
+                DateTime(int.parse(parts[2]), ayIndex + 1, int.parse(parts[0]));
+          }
+        }
       } catch (_) {}
     }
 
     String seciliGun = sTarih.day.toString();
     String seciliAy = aylar[sTarih.month - 1];
     String seciliYil = sTarih.year.toString();
+    if (!['2026', '2027', '2028', '2029', '2030'].contains(seciliYil))
+      seciliYil = '2026';
 
     String durum = mevcutFaaliyet?['durum'] ?? 'Yapılacak';
     String oncelik = mevcutFaaliyet?['oncelik'] ?? 'Normal';
 
-    // Veritabanı çakışmalarını önlemek için güvenlik kontrolü (contains)
     String hedefBirim = mevcutFaaliyet?['hedef_birim'] ?? dinamikBirimler.first;
-    if (!dinamikBirimler.contains(hedefBirim)) {
+    if (!dinamikBirimler.contains(hedefBirim))
       hedefBirim = dinamikBirimler.first;
-    }
 
-    String secilenSorumlu =
-        mevcutFaaliyet?['olusturan_unvan'] ?? dinamikBirimler.first;
-    if (!dinamikBirimler.contains(secilenSorumlu)) {
-      secilenSorumlu = dinamikBirimler.first;
+    // Görev Atanacak Kişi Seçimi
+    String? seciliKisiId = mevcutFaaliyet?['atanan_kisi_id']?.toString();
+    if (yoneticiler.isNotEmpty) {
+      final idListesi = yoneticiler.map((y) => y['id'].toString()).toList();
+      if (seciliKisiId == null || !idListesi.contains(seciliKisiId)) {
+        seciliKisiId = supabase.auth.currentUser?.id;
+        if (!idListesi.contains(seciliKisiId)) {
+          seciliKisiId = idListesi.first;
+        }
+      }
     }
 
     bool isUpdate = mevcutFaaliyet != null;
@@ -175,14 +198,14 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                         size: 28),
                     const SizedBox(width: 12),
                     Expanded(
-                        child: Text(
-                            isUpdate
-                                ? 'Faaliyeti Düzenle'
-                                : 'Yeni Faaliyet Ekle',
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold))),
+                      child: Text(
+                        isUpdate ? 'Faaliyeti Düzenle' : 'Yeni Faaliyet Ekle',
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold),
+                      ),
+                    ),
                     IconButton(
                         icon: const Icon(Icons.close, color: Colors.white54),
                         onPressed: () => Navigator.pop(context)),
@@ -190,10 +213,11 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                 ),
                 const SizedBox(height: 24),
                 TextField(
-                    controller: baslikController,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: _koyuInputDekorasyonu(
-                        label: 'Faaliyet Adı', icon: Icons.description)),
+                  controller: baslikController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: _koyuInputDekorasyonu(
+                      label: 'Faaliyet Adı', icon: Icons.description),
+                ),
                 const SizedBox(height: 16),
                 const Text('Faaliyet / İşlem Tarihi:',
                     style: TextStyle(
@@ -229,108 +253,143 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                   ],
                 ),
                 const SizedBox(height: 16),
-
-                // İki dropdown da artık dinamikBirimler'den besleniyor
                 DropdownButtonFormField<String>(
-                    value: hedefBirim,
-                    items: dinamikBirimler
-                        .map((e) => DropdownMenuItem(
-                            value: e,
-                            child: Text(e, overflow: TextOverflow.ellipsis)))
-                        .toList(),
-                    onChanged: (val) => setModalState(() => hedefBirim = val!),
-                    dropdownColor: const Color(0xFF1F2624),
+                  value: hedefBirim,
+                  isExpanded: true,
+                  items: dinamikBirimler
+                      .map((e) => DropdownMenuItem(
+                          value: e,
+                          child: Text(e, overflow: TextOverflow.ellipsis)))
+                      .toList(),
+                  onChanged: (val) => setModalState(() => hedefBirim = val!),
+                  dropdownColor: AppColors.inputFill,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: _koyuInputDekorasyonu(
+                      label: 'Sorumlu Birim / Komisyon', icon: Icons.domain),
+                ),
+                const SizedBox(height: 16),
+                if (yoneticiler.isNotEmpty)
+                  DropdownButtonFormField<String>(
+                    value: seciliKisiId,
+                    isExpanded: true,
+                    items: yoneticiler.map((y) {
+                      final adSoyad =
+                          '${y['ad'] ?? ''} ${y['soyad'] ?? ''}'.trim();
+                      final unvan = (y['unvan'] ?? '').toString().trim();
+                      final etiket =
+                          unvan.isNotEmpty ? '$adSoyad ($unvan)' : adSoyad;
+                      return DropdownMenuItem<String>(
+                        value: y['id'].toString(),
+                        child: Text(etiket.isEmpty ? 'Yönetici' : etiket,
+                            overflow: TextOverflow.ellipsis),
+                      );
+                    }).toList(),
+                    onChanged: (val) => setModalState(() => seciliKisiId = val),
+                    dropdownColor: AppColors.inputFill,
                     style: const TextStyle(color: Colors.white),
                     decoration: _koyuInputDekorasyonu(
-                        label: 'Sorumlu Birim / Komisyon', icon: Icons.domain)),
+                        label: 'Görev Atanan Kişi (Bildirim Gider)',
+                        icon: Icons.notifications_active_outlined),
+                  ),
                 const SizedBox(height: 16),
-
-                DropdownButtonFormField<String>(
-                    value: secilenSorumlu,
-                    items: dinamikBirimler
-                        .map((e) => DropdownMenuItem(
-                            value: e,
-                            child: Text(e, overflow: TextOverflow.ellipsis)))
-                        .toList(),
-                    onChanged: (val) =>
-                        setModalState(() => secilenSorumlu = val!),
-                    dropdownColor: const Color(0xFF1F2624),
-                    style: const TextStyle(color: Colors.white),
-                    decoration: _koyuInputDekorasyonu(
-                        label: 'Görevi Oluşturan Kişi / Yetkili',
-                        icon: Icons.person)),
-                const SizedBox(height: 16),
-
                 Row(
                   children: [
                     Expanded(
-                        child: DropdownButtonFormField<String>(
-                            value: durum,
-                            items: ['Yapılacak', 'Yapılıyor', 'Tamamlandı']
-                                .map((e) =>
-                                    DropdownMenuItem(value: e, child: Text(e)))
-                                .toList(),
-                            onChanged: (val) =>
-                                setModalState(() => durum = val!),
-                            dropdownColor: const Color(0xFF1F2624),
-                            style: const TextStyle(color: Colors.white),
-                            decoration: _koyuInputDekorasyonu(
-                                label: 'Durum',
-                                icon: Icons.stacked_bar_chart))),
+                      child: DropdownButtonFormField<String>(
+                        value: durum,
+                        items: ['Yapılacak', 'Yapılıyor', 'Tamamlandı']
+                            .map((e) =>
+                                DropdownMenuItem(value: e, child: Text(e)))
+                            .toList(),
+                        onChanged: (val) => setModalState(() => durum = val!),
+                        dropdownColor: AppColors.inputFill,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: _koyuInputDekorasyonu(
+                            label: 'Durum', icon: Icons.stacked_bar_chart),
+                      ),
+                    ),
                     const SizedBox(width: 12),
                     Expanded(
-                        child: DropdownButtonFormField<String>(
-                            value: oncelik,
-                            items: ['Acil', 'Normal', 'Düşük']
-                                .map((e) =>
-                                    DropdownMenuItem(value: e, child: Text(e)))
-                                .toList(),
-                            onChanged: (val) =>
-                                setModalState(() => oncelik = val!),
-                            dropdownColor: const Color(0xFF1F2624),
-                            style: const TextStyle(color: Colors.white),
-                            decoration: _koyuInputDekorasyonu(
-                                label: 'Öncelik', icon: Icons.flag))),
+                      child: DropdownButtonFormField<String>(
+                        value: oncelik,
+                        items: ['Acil', 'Normal', 'Düşük']
+                            .map((e) =>
+                                DropdownMenuItem(value: e, child: Text(e)))
+                            .toList(),
+                        onChanged: (val) => setModalState(() => oncelik = val!),
+                        dropdownColor: AppColors.inputFill,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: _koyuInputDekorasyonu(
+                            label: 'Öncelik', icon: Icons.flag),
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 32),
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF69F0AE),
-                      foregroundColor: Colors.black,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10)),
-                      padding: const EdgeInsets.symmetric(vertical: 14)),
+                    backgroundColor: AppColors.accent,
+                    foregroundColor: Colors.black,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
                   onPressed: () async {
-                    if (baslikController.text.isNotEmpty) {
-                      String tarihStr = '$seciliGun $seciliAy$seciliYil';
-                      if (isUpdate) {
-                        await supabase.from('faaliyetler').update({
-                          'baslik': baslikController.text,
-                          'tarih': tarihStr,
-                          'durum': durum,
-                          'oncelik': oncelik,
-                          'hedef_birim': hedefBirim,
-                          'olusturan_unvan': secilenSorumlu
-                        }).eq('id', mevcutFaaliyet['id']);
-                      } else {
-                        await supabase.from('faaliyetler').insert({
-                          'baslik': baslikController.text,
-                          'tarih': tarihStr,
-                          'durum': durum,
-                          'kategori': 'Eğitim',
-                          'oncelik': oncelik,
-                          'hedef_birim': hedefBirim,
-                          'olusturan_unvan': secilenSorumlu
-                        });
-                      }
-                      if (!context.mounted) return;
-                      Navigator.pop(context);
-                      setState(() {});
+                    if (baslikController.text.trim().isEmpty) return;
+
+                    String tarihStr = '$seciliGun $seciliAy $seciliYil';
+                    String sorumluEtiketi = hedefBirim;
+
+                    if (seciliKisiId != null && yoneticiler.isNotEmpty) {
+                      final secilenProfil = yoneticiler.firstWhere(
+                        (y) => y['id'].toString() == seciliKisiId,
+                        orElse: () => yoneticiler.first,
+                      );
+                      final adSoyad =
+                          '${secilenProfil['ad'] ?? ''} ${secilenProfil['soyad'] ?? ''}'
+                              .trim();
+                      final unvan =
+                          (secilenProfil['unvan'] ?? '').toString().trim();
+                      sorumluEtiketi =
+                          unvan.isNotEmpty ? '$adSoyad ($unvan)' : adSoyad;
                     }
+
+                    final Map<String, dynamic> kayitVerisi = {
+                      'baslik': baslikController.text.trim(),
+                      'tarih': tarihStr,
+                      'durum': durum,
+                      'oncelik': oncelik,
+                      'hedef_birim': hedefBirim,
+                      'olusturan_unvan': sorumluEtiketi,
+                      'atanan_kisi_id': seciliKisiId,
+                    };
+
+                    if (isUpdate) {
+                      await supabase
+                          .from('faaliyetler')
+                          .update(kayitVerisi)
+                          .eq('id', mevcutFaaliyet['id']);
+                    } else {
+                      kayitVerisi['kategori'] = 'Genel';
+                      await supabase.from('faaliyetler').insert(kayitVerisi);
+                    }
+
+                    // Atanan kişiye Push Bildirim Gönder
+                    if (seciliKisiId != null) {
+                      await NotificationService.gorevBildirimiGonder(
+                        hedefKullaniciId: seciliKisiId!,
+                        faaliyetBaslik: baslikController.text.trim(),
+                        tarih: tarihStr,
+                        birim: hedefBirim,
+                      );
+                    }
+
+                    if (!context.mounted) return;
+                    Navigator.pop(context);
+                    setState(() {});
                   },
                   icon: const Icon(Icons.check, size: 20),
-                  label: const Text('Kaydet',
+                  label: const Text('Kaydet ve Bildir',
                       style:
                           TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                 ),
@@ -344,9 +403,10 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
 
   void _whatsappOzetKopyala(List<Map<String, dynamic>> faaliyetler) {
     String metin = "📌 *KOCAELİ GENÇ İHH YILLIK PLAN*\n\n";
-    for (var f in faaliyetler)
+    for (var f in faaliyetler) {
       metin +=
-          "🔹 *${f['baslik']}*\n📅 ${f['tarih']}\n📌 Durum: ${f['durum']}\n👤 Sorumlu: ${f['olusturan_unvan']}\n\n";
+          "🔹 *${f['baslik']}*\n📅 ${f['tarih']}\n📌 Durum: ${f['durum']} | Birim: ${f['hedef_birim']}\n👤 Sorumlu: ${f['olusturan_unvan']}\n\n";
+    }
     Clipboard.setData(ClipboardData(text: metin));
     ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('WhatsApp özeti panoya kopyalandı!')));
@@ -355,22 +415,39 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF1B4D3E),
+      backgroundColor: AppColors.secondary,
       appBar: AppBar(
-        title: Row(children: [
-          Image.asset('assets/images/logo.png', height: 30),
-          const SizedBox(width: 10),
-          const Text('Kocaeli Genç İHH',
-              style: TextStyle(color: Colors.white, fontSize: 16))
-        ]),
-        backgroundColor: const Color(0xFF121816),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(5),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                      color: AppColors.accent.withValues(alpha: 0.3),
+                      blurRadius: 8),
+                ],
+              ),
+              child: Image.asset('assets/images/logo.png', height: 28),
+            ),
+            const SizedBox(width: 12),
+            const Text('Kocaeli Genç İHH',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold)),
+          ],
+        ),
+        backgroundColor: AppColors.background,
         actions: [
           IconButton(
-              icon: const Icon(Icons.person, color: Colors.white),
-              onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (context) => const ProfileScreen())))
+            icon: const Icon(Icons.person, color: AppColors.accent),
+            tooltip: 'Profilim',
+            onPressed: () => Navigator.push(context,
+                MaterialPageRoute(builder: (context) => const ProfileScreen())),
+          ),
         ],
       ),
       body: StreamBuilder<List<Map<String, dynamic>>>(
@@ -391,7 +468,7 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
           if (snapshot.connectionState == ConnectionState.waiting &&
               !snapshot.hasData) {
             return const Center(
-                child: CircularProgressIndicator(color: Color(0xFF69F0AE)));
+                child: CircularProgressIndicator(color: AppColors.accent));
           }
 
           final List<Map<String, dynamic>> faaliyetler = snapshot.hasData
@@ -412,17 +489,18 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                          colors: [Color(0xFF121816), Color(0xFF1A2220)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight),
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.3),
-                            blurRadius: 10,
-                            spreadRadius: 2)
-                      ]),
+                    gradient: const LinearGradient(
+                        colors: [AppColors.background, AppColors.card],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight),
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.3),
+                          blurRadius: 10,
+                          spreadRadius: 2)
+                    ],
+                  ),
                   child: Column(
                     children: [
                       const Text('CANLI FAALİYET & PLAN ÖZETİ',
@@ -460,7 +538,7 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                 _modulSatiri(
                     context,
                     'Yeni Faaliyet Ekle',
-                    'Planlanan yeni bir etkinlik tanımlayın',
+                    'Planlanan yeni bir etkinlik tanımlayın ve görev atayın',
                     Icons.add_box,
                     Colors.tealAccent,
                     () => _faaliyetEkleModalAc()),
@@ -479,8 +557,8 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                 _modulSatiri(
                     context,
                     'Planlama Takvimi',
-                    'Tüm planları ajanda üzerinde görün',
-                    Icons.school,
+                    'Tüm planları ajanda üzerinde görün ve ekleyin',
+                    Icons.calendar_month,
                     Colors.purpleAccent,
                     () => Navigator.push(
                         context,
@@ -491,7 +569,7 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                 _modulSatiri(
                     context,
                     'Teşkilat Birimleri',
-                    'Birimleri görüntüleyin veya ekleyin',
+                    'Birimleri ekleyin, düzenleyin veya silin',
                     Icons.group,
                     Colors.lightBlueAccent,
                     () => Navigator.push(
@@ -502,7 +580,7 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                 _modulSatiri(
                     context,
                     'PDF Raporlar & Analiz',
-                    'Tüm faaliyetleri PDF olarak indirin',
+                    'Tüm faaliyetleri kurumsal PDF olarak indirin',
                     Icons.picture_as_pdf,
                     Colors.redAccent,
                     () => Navigator.push(
@@ -511,16 +589,17 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                             builder: (context) => const PdfScreen()))),
                 const SizedBox(height: 24),
                 Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Aktif Faaliyetler ve Planlar',
-                          style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white)),
-                      Text('(${faaliyetler.length})',
-                          style: const TextStyle(color: Colors.white70))
-                    ]),
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('Aktif Faaliyetler ve Planlar',
+                        style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white)),
+                    Text('(${faaliyetler.length})',
+                        style: const TextStyle(color: Colors.white70)),
+                  ],
+                ),
                 const SizedBox(height: 8),
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
@@ -532,11 +611,11 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                         child: ChoiceChip(
                           label: Text(filtre),
                           selected: secilenFiltre == filtre,
-                          selectedColor: const Color(0xFF121816),
-                          backgroundColor: const Color(0xFF1A2220),
+                          selectedColor: AppColors.background,
+                          backgroundColor: AppColors.card,
                           labelStyle: TextStyle(
                               color: secilenFiltre == filtre
-                                  ? Colors.white
+                                  ? AppColors.accent
                                   : Colors.white70),
                           onSelected: (bool selected) =>
                               setState(() => secilenFiltre = filtre),
@@ -573,7 +652,7 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                       itemBuilder: (context, index) {
                         final f = filtrelenmis[index];
                         return Card(
-                          color: const Color(0xFF1A2220),
+                          color: AppColors.card,
                           elevation: 3,
                           margin: const EdgeInsets.only(bottom: 12),
                           shape: RoundedRectangleBorder(
@@ -590,16 +669,17 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                                       MainAxisAlignment.spaceBetween,
                                   children: [
                                     Chip(
-                                        label: Text(f['durum'] ?? 'Yapılacak',
-                                            style: const TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 12)),
-                                        backgroundColor:
-                                            f['durum'] == 'Tamamlandı'
-                                                ? Colors.green.shade800
-                                                : (f['durum'] == 'Yapılıyor'
-                                                    ? Colors.orange.shade800
-                                                    : Colors.blue.shade800)),
+                                      label: Text(f['durum'] ?? 'Yapılacak',
+                                          style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 12)),
+                                      backgroundColor:
+                                          f['durum'] == 'Tamamlandı'
+                                              ? Colors.green.shade800
+                                              : (f['durum'] == 'Yapılıyor'
+                                                  ? Colors.orange.shade800
+                                                  : Colors.blue.shade800),
+                                    ),
                                     Row(
                                       children: [
                                         IconButton(
@@ -620,28 +700,28 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                                                 size: 20,
                                                 color: Colors.white70),
                                             onPressed: () =>
-                                                _whatsappOzetKopyala(
-                                                    filtrelenmis)),
+                                                _whatsappOzetKopyala([f])),
                                       ],
                                     ),
                                   ],
                                 ),
-                                Text(f['baslik'],
+                                Text(f['baslik'] ?? '',
                                     style: const TextStyle(
                                         fontSize: 16,
                                         fontWeight: FontWeight.bold,
                                         color: Colors.white)),
                                 const SizedBox(height: 8),
-                                Text('📅 Tarih: ${f['tarih']}',
+                                Text('📅 Tarih: ${f['tarih'] ?? '-'}',
                                     style:
                                         const TextStyle(color: Colors.white70)),
                                 Text(
-                                    '📌 Öncelik: ${f['oncelik']} \vert{} Birim:${f['hedef_birim']}',
+                                    '📌 Öncelik: ${f['oncelik'] ?? 'Normal'} | Birim: ${f['hedef_birim'] ?? '-'}',
                                     style:
                                         const TextStyle(color: Colors.white70)),
-                                Text('👤 Sorumlu: ${f['olusturan_unvan']}',
-                                    style:
-                                        const TextStyle(color: Colors.white54)),
+                                Text(
+                                    '👤 Sorumlu: ${f['olusturan_unvan'] ?? '-'}',
+                                    style: const TextStyle(
+                                        color: AppColors.accent, fontSize: 13)),
                               ],
                             ),
                           ),
@@ -676,7 +756,7 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-            color: const Color(0xFF1A2220),
+            color: AppColors.card,
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: Colors.white.withValues(alpha: 0.1))),
         child: Row(

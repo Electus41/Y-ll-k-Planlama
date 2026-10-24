@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../core/constants.dart';
+import '../core/notification_service.dart';
 import 'activities_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -23,27 +25,28 @@ class _RegisterScreenState extends State<RegisterScreen> {
     return InputDecoration(
       labelText: label,
       labelStyle: const TextStyle(color: Colors.white70, fontSize: 14),
-      prefixIcon: Icon(icon, color: const Color(0xFF69F0AE), size: 20),
+      prefixIcon: Icon(icon, color: AppColors.accent, size: 20),
       filled: true,
-      fillColor: const Color(0xFF1F2624),
+      fillColor: AppColors.inputFill,
       border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
       enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.white12)),
+          borderSide: const BorderSide(color: Colors.white12)),
       focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Color(0xFF69F0AE), width: 1.5)),
+          borderSide: const BorderSide(color: AppColors.accent, width: 1.5)),
       contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
     );
   }
 
   Future<void> _kayitOl() async {
-    if (_emailController.text.trim().isEmpty ||
+    if (_adController.text.trim().isEmpty ||
+        _emailController.text.trim().isEmpty ||
         _sifreController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('Lütfen e-posta ve şifre alanlarını doldurun.'),
+            content: Text('Lütfen Ad, E-posta ve Şifre alanlarını doldurun.'),
             backgroundColor: Colors.orange),
       );
       return;
@@ -51,27 +54,48 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     setState(() => _isLoading = true);
     try {
+      final ad = _adController.text.trim();
+      final soyad = _soyadController.text.trim();
+      final telefon = _telefonController.text.trim();
+      final unvan = _unvanController.text.trim().isEmpty
+          ? 'Yönetici'
+          : _unvanController.text.trim();
+
       final response = await supabase.auth.signUp(
         email: _emailController.text.trim(),
         password: _sifreController.text.trim(),
         data: {
-          'ad': _adController.text.trim(),
-          'soyad': _soyadController.text.trim(),
-          'telefon': _telefonController.text.trim(),
-          'unvan': _unvanController.text.trim(),
+          'ad': ad,
+          'soyad': soyad,
+          'telefon': telefon,
+          'unvan': unvan,
         },
       );
 
       if (response.user != null) {
+        await supabase.from('profiller').upsert({
+          'id': response.user!.id,
+          'ad': ad,
+          'soyad': soyad,
+          'telefon': telefon,
+          'unvan': unvan,
+          'email': _emailController.text.trim(),
+        });
+
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('beni_hatirla', true);
+        await NotificationService.kullaniciCihaziniSenkronizeEt();
+
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
               content: Text('Kayıt başarıyla oluşturuldu!'),
               backgroundColor: Colors.green),
         );
-        Navigator.pushReplacement(
+        Navigator.pushAndRemoveUntil(
           context,
           MaterialPageRoute(builder: (context) => const ActivitiesScreen()),
+          (route) => false,
         );
       }
     } catch (e) {
@@ -88,14 +112,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF121816),
+      backgroundColor: AppColors.background,
       appBar: AppBar(
         title: const Text('Yeni Yönetici Kaydı',
             style: TextStyle(
                 color: Colors.white,
                 fontSize: 16,
                 fontWeight: FontWeight.bold)),
-        backgroundColor: const Color(0xFF1B4D3E),
+        backgroundColor: AppColors.secondary,
         iconTheme: const IconThemeData(color: Colors.white),
         elevation: 0,
       ),
@@ -165,7 +189,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     controller: _unvanController,
                     style: const TextStyle(color: Colors.white),
                     decoration: _koyuInputDekorasyonu(
-                        label: 'Kurumsal Unvan (Örn: İl Başkan Yardımcısı)',
+                        label: 'Kurumsal Unvan (Örn: İl Başkanı)',
                         icon: Icons.badge_outlined),
                   ),
                   const SizedBox(height: 16),
@@ -181,7 +205,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     height: 54,
                     child: ElevatedButton(
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF69F0AE),
+                        backgroundColor: AppColors.accent,
                         foregroundColor: Colors.black,
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12)),

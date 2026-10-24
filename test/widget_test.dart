@@ -4,7 +4,7 @@ import 'package:kocaeli_genc_ihh_takip/main.dart';
 
 void main() {
   testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    await tester.pumpWidget(const KocaeliGenclikApp());
+    await tester.pumpWidget(const KocaeliGenclikApp(dogrudanGiris: false));
 
     expect(find.byType(MaterialApp), findsOneWidget);
   });
