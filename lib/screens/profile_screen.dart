@@ -56,7 +56,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  // Cihazın bildirim kimliğini Supabase'e kaydeder
   Future<void> _oneSignalCihazKaydet() async {
     try {
       final onesignalId = OneSignal.User.pushSubscription.id;
@@ -194,6 +193,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                 if (!ctx.mounted) return;
                 Navigator.pop(ctx);
+
+                // Eğer güncellenen kullanıcı bizzat kendimse profili de yenile
+                if (kullanici['id'].toString() ==
+                    supabase.auth.currentUser?.id) {
+                  _profilGetir();
+                }
+
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                     content: Text('Kullanıcı başarıyla güncellendi!'),
                     backgroundColor: Colors.green));
