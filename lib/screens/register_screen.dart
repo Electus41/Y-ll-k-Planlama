@@ -114,7 +114,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: const Text('Yeni Yönetici Kaydı',
+        title: const Text('Yeni Birim Başkanı Kaydı',
             style: TextStyle(
                 color: Colors.white,
                 fontSize: 16,
@@ -142,7 +142,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    'Yeni yönetici hesabı oluşturmak için bilgileri doldurun.',
+                    'Yeni birim başkanı hesabı oluşturmak için bilgileri doldurun.',
                     style: TextStyle(color: Colors.white54, fontSize: 13),
                     textAlign: TextAlign.center,
                   ),
@@ -189,7 +189,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     controller: _unvanController,
                     style: const TextStyle(color: Colors.white),
                     decoration: _koyuInputDekorasyonu(
-                        label: 'Kurumsal Unvan (Örn: İl Başkanı)',
+                        label: 'Kurumsal Unvan (Örn: Ortaokul Birim Başkanı)',
                         icon: Icons.badge_outlined),
                   ),
                   const SizedBox(height: 16),

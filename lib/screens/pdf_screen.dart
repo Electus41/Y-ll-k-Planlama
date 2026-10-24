@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -77,9 +78,13 @@ class _PdfScreenState extends State<PdfScreen> {
         ),
       );
 
-      await Printing.layoutPdf(
-          onLayout: (format) async => pdf.save(),
-          name: 'Kocaeli_Genc_IHH_Rapor.pdf');
+      final Uint8List pdfBytes = await pdf.save();
+
+      // Mobilde ve Web'de %100 çalışan paylaşım / indirme yöneticisi
+      await Printing.sharePdf(
+        bytes: pdfBytes,
+        filename: 'Kocaeli_Genc_IHH_Rapor_$durumFiltresi.pdf',
+      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -117,7 +122,7 @@ class _PdfScreenState extends State<PdfScreen> {
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'İstediğiniz kapsamı seçerek tüm plan ve görevleri Türkçe karakter uyumlu PDF tablosu olarak indirebilir veya paylaşabilirsiniz.',
+                    'İstediğiniz kapsamı seçerek tüm plan ve görevleri PDF tablosu olarak indirebilir veya paylaşabilirsiniz.',
                     style: TextStyle(color: Colors.white60, fontSize: 13),
                   ),
                   const SizedBox(height: 24),

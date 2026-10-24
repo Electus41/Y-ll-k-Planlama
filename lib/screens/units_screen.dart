@@ -128,7 +128,7 @@ class _UnitsScreenState extends State<UnitsScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: const Text('Teşkilat Birimleri',
+        title: const Text('Genç İHH Teşkilat Birimleri',
             style: TextStyle(color: Colors.white, fontSize: 16)),
         backgroundColor: AppColors.secondary,
         iconTheme: const IconThemeData(color: Colors.white),

@@ -204,7 +204,7 @@ class _KanbanScreenState extends State<KanbanScreen> {
                     dropdownColor: AppColors.inputFill,
                     style: const TextStyle(color: Colors.white),
                     decoration: _koyuInputDekorasyonu(
-                        label: 'Görev Atanan Yönetici',
+                        label: 'Göreve Atanan Birim Başkanı / Sorumlu Kişi',
                         icon: Icons.person_pin_circle),
                   ),
                 const SizedBox(height: 16),
@@ -365,13 +365,10 @@ class _KanbanScreenState extends State<KanbanScreen> {
     );
   }
 
-  // BURADA DEĞİŞİKLİK YAPILDI:
-  // Dikeyde ekranı sıkıştıran `Expanded` yerine, sütunlara sabit genişlik (300 piksel) verip
-  // `SingleChildScrollView(scrollDirection: Axis.horizontal)` sararak daralmayı ve harf dökülmesini çözdük.
   Widget _sutunOlustur(String baslik, String dbDurum,
       List<Map<String, dynamic>> isler, Color renk) {
     return Container(
-      width: 290, // Sütunların telefonda ezilmemesi için sabit ideal genişlik
+      width: 290,
       margin: const EdgeInsets.symmetric(horizontal: 6),
       child: DragTarget<Map<String, dynamic>>(
         onAcceptWithDetails: (details) {
