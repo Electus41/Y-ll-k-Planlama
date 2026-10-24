@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up Java
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
@@ -26,6 +26,9 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
+      - name: Accept Android SDK Licenses
+        run: yes "y" | flutter doctor --android-licenses || true
+
       - name: Build APK (Android)
         run: flutter build apk --release
 
@@ -38,4 +41,4 @@ jobs:
           name: app-binaries
           path: |
             build/app/outputs/flutter-apk/app-release.apk
-            build/ios/archive/Runner.xcarchive
+            build/ios/ipa/*.ipa
