@@ -1,44 +1,75 @@
-name: Flutter Build
+name: Kocaeli Genç İHH CI/CD (Web, APK, iOS)
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
+
+permissions:
+  contents: write
 
 jobs:
-  build:
-    runs-on: macos-latest
-
+  build-web-and-apk:
+    name: Web Yayını ve APK Oluşturma
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Kodu Çek
+        uses: actions/checkout@v4
 
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'zulu'
-          java-version: '17'
-
-      - name: Set up Flutter
+      - name: Flutter Kurulumu
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: 'stable'
           channel: 'stable'
 
-      - name: Install Dependencies
+      - name: Paketleri İndir
         run: flutter pub get
 
-      - name: Accept Android SDK Licenses
-        run: yes "y" | flutter doctor --android-licenses || true
+      - name: Web İçin Derle
+        run: flutter build web --release --base-href "/Y-ll-k-Planlama/"
 
-      - name: Build APK (Android)
+      - name: Web Sürümünü GitHub Pages'e Yükle
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./build/web
+
+      - name: Android APK Derle
         run: flutter build apk --release
 
-      - name: Build IPA (iOS)
-        run: flutter build ipa --no-codesign
-
-      - name: Upload Build Artifacts
+      - name: APK Dosyasını Kaydet (Artifact Olarak)
         uses: actions/upload-artifact@v4
         with:
-          name: app-binaries
-          path: |
-            build/app/outputs/flutter-apk/app-release.apk
-            build/ios/ipa/*.ipa
+          name: GencIHH-APK
+          path: build/app/outputs/flutter-apk/app-release.apk
+
+  build-ios:
+    name: iOS Derlemesi ve IPA Üretimi
+    runs-on: macos-latest
+    steps:
+      - name: Kodu Çek
+        uses: actions/checkout@v4
+
+      - name: Flutter Kurulumu
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Paketleri İndir
+        run: flutter pub get
+
+      - name: iOS İçin Derle (Sertifikasız)
+        run: flutter build ios --release --no-codesign
+
+      - name: IPA Dosyasını Paketle
+        run: |
+          cd build/ios/iphoneos
+          mkdir Payload
+          mv Runner.app Payload/
+          zip -r GencIHH.ipa Payload
+          cd ../../..
+
+      - name: IPA Dosyasını Kaydet (Artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: GencIHH-IPA
+          path: build/ios/iphoneos/GencIHH.ipa
