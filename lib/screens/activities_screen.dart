@@ -111,58 +111,77 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
     Map<String, dynamic>? aktifKullanici;
 
     try {
-      // Sadece profilleri (kişileri) çekiyoruz
       final profilData = await supabase
           .from('profiller')
           .select('id, ad, soyad, unvan')
           .order('ad');
       yoneticiler = List<Map<String, dynamic>>.from(profilData);
 
-      // Oturumu açık olan kişiyi bul (Görevi Atayan kişi olarak kaydedilecek)
       final currentUser = supabase.auth.currentUser;
       if (currentUser != null) {
         aktifKullanici = yoneticiler.firstWhere(
             (y) => y['id'].toString() == currentUser.id,
             orElse: () => {'ad': 'Yönetici', 'soyad': '', 'unvan': ''});
       }
-    } catch (e) {
-      debugPrint('Profiller çekilemedi: $e');
-    }
+    } catch (e) {}
 
     if (!mounted) return;
 
     final baslikController =
         TextEditingController(text: mevcutFaaliyet?['baslik'] ?? '');
 
+    bool aralikliTarih = mevcutFaaliyet != null &&
+        mevcutFaaliyet['tarih'].toString().contains('-');
+
     DateTime sTarih = DateTime.now();
+    String seciliGun = sTarih.day.toString();
+    String seciliAy = aylar[sTarih.month - 1];
+    String seciliYil = sTarih.year.toString();
+
+    String bitisGun = seciliGun;
+    String bitisAy = seciliAy;
+    String bitisYil = seciliYil;
+
     if (mevcutFaaliyet != null && mevcutFaaliyet['tarih'] != null) {
+      String tamTarih = mevcutFaaliyet['tarih'].toString();
       try {
-        final parts = mevcutFaaliyet['tarih'].toString().split(' ');
-        if (parts.length == 3) {
-          final ayIndex = aylar.indexOf(parts[1]);
-          if (ayIndex != -1) {
-            sTarih =
-                DateTime(int.parse(parts[2]), ayIndex + 1, int.parse(parts[0]));
+        if (tamTarih.contains('-')) {
+          var parcalar = tamTarih.split('-');
+          var bas = parcalar[0].trim().split(' ');
+          var bit = parcalar[1].trim().split(' ');
+          if (bas.length == 3) {
+            seciliGun = bas[0];
+            seciliAy = bas[1];
+            seciliYil = bas[2];
+          }
+          if (bit.length == 3) {
+            bitisGun = bit[0];
+            bitisAy = bit[1];
+            bitisYil = bit[2];
+          }
+        } else {
+          var bas = tamTarih.split(' ');
+          if (bas.length == 3) {
+            seciliGun = bas[0];
+            seciliAy = bas[1];
+            seciliYil = bas[2];
           }
         }
       } catch (_) {}
     }
 
-    String seciliGun = sTarih.day.toString();
-    String seciliAy = aylar[sTarih.month - 1];
-    String seciliYil = sTarih.year.toString();
     if (!['2026', '2027', '2028', '2029', '2030'].contains(seciliYil))
       seciliYil = '2026';
+    if (!['2026', '2027', '2028', '2029', '2030'].contains(bitisYil))
+      bitisYil = '2026';
 
     String durum = mevcutFaaliyet?['durum'] ?? 'Yapılacak';
     String oncelik = mevcutFaaliyet?['oncelik'] ?? 'Normal';
-
-    // Görev Atanacak Kişi Seçimi
     String? seciliKisiId = mevcutFaaliyet?['atanan_kisi_id']?.toString();
+
     if (yoneticiler.isNotEmpty) {
       final idListesi = yoneticiler.map((y) => y['id'].toString()).toList();
       if (seciliKisiId == null || !idListesi.contains(seciliKisiId)) {
-        // Düzenleme değilse ve boşsa, varsayılan olarak ilk kişiyi seç
         seciliKisiId = idListesi.first;
       }
     }
@@ -210,8 +229,27 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                       label: 'Faaliyet Adı', icon: Icons.description),
                 ),
                 const SizedBox(height: 16),
-                const Text('Faaliyet / İşlem Tarihi:',
-                    style: TextStyle(
+                SwitchListTile(
+                  title: const Text('Tarih Aralığı Seç',
+                      style: TextStyle(color: Colors.white, fontSize: 14)),
+                  subtitle: const Text(
+                      'Birden fazla gün sürecek faaliyetler için açın',
+                      style: TextStyle(color: Colors.white54, fontSize: 12)),
+                  value: aralikliTarih,
+                  activeColor: AppColors.accent,
+                  contentPadding: EdgeInsets.zero,
+                  onChanged: (val) {
+                    setModalState(() {
+                      aralikliTarih = val;
+                    });
+                  },
+                ),
+                const SizedBox(height: 8),
+                Text(
+                    aralikliTarih
+                        ? 'Başlangıç Tarihi:'
+                        : 'Faaliyet / İşlem Tarihi:',
+                    style: const TextStyle(
                         color: Colors.white70,
                         fontSize: 12,
                         fontWeight: FontWeight.bold)),
@@ -243,9 +281,44 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                                 setModalState(() => seciliYil = val!))),
                   ],
                 ),
+                if (aralikliTarih) ...[
+                  const SizedBox(height: 16),
+                  const Text('Bitiş Tarihi:',
+                      style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                          flex: 2,
+                          child: _tarihDropdown(
+                              value: bitisGun,
+                              items:
+                                  List.generate(31, (i) => (i + 1).toString()),
+                              onChanged: (val) =>
+                                  setModalState(() => bitisGun = val!))),
+                      const SizedBox(width: 8),
+                      Expanded(
+                          flex: 3,
+                          child: _tarihDropdown(
+                              value: bitisAy,
+                              items: aylar,
+                              onChanged: (val) =>
+                                  setModalState(() => bitisAy = val!))),
+                      const SizedBox(width: 8),
+                      Expanded(
+                          flex: 2,
+                          child: _tarihDropdown(
+                              value: bitisYil,
+                              items: ['2026', '2027', '2028', '2029', '2030'],
+                              onChanged: (val) =>
+                                  setModalState(() => bitisYil = val!))),
+                    ],
+                  ),
+                ],
                 const SizedBox(height: 16),
-
-                // Sadeleştirilmiş Tek Açılır Menü (Görev Atanan Kişi)
                 if (yoneticiler.isNotEmpty)
                   DropdownButtonFormField<String>(
                     value: seciliKisiId,
@@ -316,8 +389,10 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                     if (baslikController.text.trim().isEmpty) return;
 
                     String tarihStr = '$seciliGun $seciliAy $seciliYil';
+                    if (aralikliTarih) {
+                      tarihStr += ' - $bitisGun $bitisAy $bitisYil';
+                    }
 
-                    // 1. Görevi Alan (Sorumlu) Kişinin Etiketi
                     String sorumluEtiketi = 'Bilinmiyor';
                     if (seciliKisiId != null && yoneticiler.isNotEmpty) {
                       final secilen = yoneticiler.firstWhere(
@@ -331,7 +406,6 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                           unvan.isNotEmpty ? '$adSoyad ($unvan)' : adSoyad;
                     }
 
-                    // 2. Görevi Atayan (Oturumu Açık Olan) Kişinin Etiketi
                     String atayanEtiketi = 'Sistem';
                     if (aktifKullanici != null) {
                       final adSoyad =
@@ -348,10 +422,8 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                       'tarih': tarihStr,
                       'durum': durum,
                       'oncelik': oncelik,
-                      'hedef_birim':
-                          sorumluEtiketi, // Görevi alan kişi Sorumlu Birim yerine kaydediliyor
-                      'olusturan_unvan':
-                          atayanEtiketi, // Görevi atayan kişi otomatik kaydediliyor
+                      'hedef_birim': sorumluEtiketi,
+                      'olusturan_unvan': atayanEtiketi,
                       'atanan_kisi_id': seciliKisiId,
                     };
 
@@ -365,7 +437,6 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                       await supabase.from('faaliyetler').insert(kayitVerisi);
                     }
 
-                    // Atanan kişiye Push Bildirim Gönder
                     if (seciliKisiId != null) {
                       await NotificationService.gorevBildirimiGonder(
                         hedefKullaniciId: seciliKisiId!,
@@ -705,8 +776,6 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                                 Text('📅 Tarih: ${f['tarih'] ?? '-'}',
                                     style:
                                         const TextStyle(color: Colors.white70)),
-
-                                // UI DÜZENLEMESİ: Sorumlu ve Atayan olarak ayarlandı
                                 Text(
                                     '📌 Öncelik: ${f['oncelik'] ?? 'Normal'} | 🎯 Sorumlu: ${f['hedef_birim'] ?? '-'}',
                                     style:
