@@ -1,0 +1,41 @@
+name: Flutter Build
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.0'
+          channel: 'stable'
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Build APK (Android)
+        run: flutter build apk --release
+
+      - name: Build IPA (iOS)
+        run: flutter build ipa --no-codesign
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-binaries
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/ios/archive/Runner.xcarchive
