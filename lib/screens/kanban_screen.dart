@@ -365,9 +365,14 @@ class _KanbanScreenState extends State<KanbanScreen> {
     );
   }
 
+  // BURADA DEĞİŞİKLİK YAPILDI:
+  // Dikeyde ekranı sıkıştıran `Expanded` yerine, sütunlara sabit genişlik (300 piksel) verip
+  // `SingleChildScrollView(scrollDirection: Axis.horizontal)` sararak daralmayı ve harf dökülmesini çözdük.
   Widget _sutunOlustur(String baslik, String dbDurum,
       List<Map<String, dynamic>> isler, Color renk) {
-    return Expanded(
+    return Container(
+      width: 290, // Sütunların telefonda ezilmemesi için sabit ideal genişlik
+      margin: const EdgeInsets.symmetric(horizontal: 6),
       child: DragTarget<Map<String, dynamic>>(
         onAcceptWithDetails: (details) {
           final data = details.data;
@@ -377,7 +382,6 @@ class _KanbanScreenState extends State<KanbanScreen> {
         },
         builder: (context, candidateData, rejectedData) {
           return Container(
-            margin: const EdgeInsets.symmetric(horizontal: 6),
             decoration: BoxDecoration(
               color: candidateData.isNotEmpty
                   ? renk.withValues(alpha: 0.1)
@@ -408,15 +412,12 @@ class _KanbanScreenState extends State<KanbanScreen> {
                     itemCount: isler.length,
                     itemBuilder: (context, index) {
                       final isItem = isler[index];
-                      // Sürüklemeyi Draggable ile anında yapılabilir hale getirdik
                       return Draggable<Map<String, dynamic>>(
                         data: isItem,
                         feedback: Material(
                           color: Colors.transparent,
-                          child: SizedBox(
-                              width:
-                                  320, // Sürüklerken kartın genişliğini sabit tutar
-                              child: _kanbanKarti(isItem)),
+                          child:
+                              SizedBox(width: 280, child: _kanbanKarti(isItem)),
                         ),
                         childWhenDragging:
                             Opacity(opacity: 0.3, child: _kanbanKarti(isItem)),
@@ -474,15 +475,19 @@ class _KanbanScreenState extends State<KanbanScreen> {
 
           return Padding(
             padding: const EdgeInsets.all(8.0),
-            child: Row(
-              children: [
-                _sutunOlustur('Yapılacak', 'Yapılacak', yapilacak,
-                    Colors.lightBlueAccent),
-                _sutunOlustur(
-                    'Yapılıyor', 'Yapılıyor', yapiliyor, Colors.orangeAccent),
-                _sutunOlustur(
-                    'Tamamlandı', 'Tamamlandı', tamamlandi, Colors.greenAccent),
-              ],
+            // YATAY KAYDIRMA EKLENDİ: Sütunların ekrana sıkışıp harfleri alt alta dökmesini önler.
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _sutunOlustur('Yapılacak', 'Yapılacak', yapilacak,
+                      Colors.lightBlueAccent),
+                  _sutunOlustur(
+                      'Yapılıyor', 'Yapılıyor', yapiliyor, Colors.orangeAccent),
+                  _sutunOlustur('Tamamlandı', 'Tamamlandı', tamamlandi,
+                      Colors.greenAccent),
+                ],
+              ),
             ),
           );
         },
