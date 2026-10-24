@@ -107,29 +107,26 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
 
   Future<void> _faaliyetEkleModalAc(
       {Map<String, dynamic>? mevcutFaaliyet}) async {
-    List<String> dinamikBirimler = [];
     List<Map<String, dynamic>> yoneticiler = [];
+    Map<String, dynamic>? aktifKullanici;
 
     try {
-      final birimData =
-          await supabase.from('birimler').select('ad').order('created_at');
-      dinamikBirimler = birimData.map((e) => e['ad'].toString()).toList();
-    } catch (e) {
-      debugPrint('Birimler çekilemedi: $e');
-    }
-
-    try {
+      // Sadece profilleri (kişileri) çekiyoruz
       final profilData = await supabase
           .from('profiller')
           .select('id, ad, soyad, unvan')
           .order('ad');
       yoneticiler = List<Map<String, dynamic>>.from(profilData);
+
+      // Oturumu açık olan kişiyi bul (Görevi Atayan kişi olarak kaydedilecek)
+      final currentUser = supabase.auth.currentUser;
+      if (currentUser != null) {
+        aktifKullanici = yoneticiler.firstWhere(
+            (y) => y['id'].toString() == currentUser.id,
+            orElse: () => {'ad': 'Yönetici', 'soyad': '', 'unvan': ''});
+      }
     } catch (e) {
       debugPrint('Profiller çekilemedi: $e');
-    }
-
-    if (dinamikBirimler.isEmpty) {
-      dinamikBirimler = ['Genel Yönetim'];
     }
 
     if (!mounted) return;
@@ -160,19 +157,13 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
     String durum = mevcutFaaliyet?['durum'] ?? 'Yapılacak';
     String oncelik = mevcutFaaliyet?['oncelik'] ?? 'Normal';
 
-    String hedefBirim = mevcutFaaliyet?['hedef_birim'] ?? dinamikBirimler.first;
-    if (!dinamikBirimler.contains(hedefBirim))
-      hedefBirim = dinamikBirimler.first;
-
     // Görev Atanacak Kişi Seçimi
     String? seciliKisiId = mevcutFaaliyet?['atanan_kisi_id']?.toString();
     if (yoneticiler.isNotEmpty) {
       final idListesi = yoneticiler.map((y) => y['id'].toString()).toList();
       if (seciliKisiId == null || !idListesi.contains(seciliKisiId)) {
-        seciliKisiId = supabase.auth.currentUser?.id;
-        if (!idListesi.contains(seciliKisiId)) {
-          seciliKisiId = idListesi.first;
-        }
+        // Düzenleme değilse ve boşsa, varsayılan olarak ilk kişiyi seç
+        seciliKisiId = idListesi.first;
       }
     }
 
@@ -253,21 +244,8 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                   ],
                 ),
                 const SizedBox(height: 16),
-                DropdownButtonFormField<String>(
-                  value: hedefBirim,
-                  isExpanded: true,
-                  items: dinamikBirimler
-                      .map((e) => DropdownMenuItem(
-                          value: e,
-                          child: Text(e, overflow: TextOverflow.ellipsis)))
-                      .toList(),
-                  onChanged: (val) => setModalState(() => hedefBirim = val!),
-                  dropdownColor: AppColors.inputFill,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: _koyuInputDekorasyonu(
-                      label: 'Sorumlu Birim / Komisyon', icon: Icons.domain),
-                ),
-                const SizedBox(height: 16),
+
+                // Sadeleştirilmiş Tek Açılır Menü (Görev Atanan Kişi)
                 if (yoneticiler.isNotEmpty)
                   DropdownButtonFormField<String>(
                     value: seciliKisiId,
@@ -288,8 +266,8 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                     dropdownColor: AppColors.inputFill,
                     style: const TextStyle(color: Colors.white),
                     decoration: _koyuInputDekorasyonu(
-                        label: 'Görev Atanan Kişi (Bildirim Gider)',
-                        icon: Icons.notifications_active_outlined),
+                        label: 'Görev Atanan Yönetici (Bildirim Gider)',
+                        icon: Icons.person_pin_circle),
                   ),
                 const SizedBox(height: 16),
                 Row(
@@ -338,19 +316,30 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                     if (baslikController.text.trim().isEmpty) return;
 
                     String tarihStr = '$seciliGun $seciliAy $seciliYil';
-                    String sorumluEtiketi = hedefBirim;
 
+                    // 1. Görevi Alan (Sorumlu) Kişinin Etiketi
+                    String sorumluEtiketi = 'Bilinmiyor';
                     if (seciliKisiId != null && yoneticiler.isNotEmpty) {
-                      final secilenProfil = yoneticiler.firstWhere(
-                        (y) => y['id'].toString() == seciliKisiId,
-                        orElse: () => yoneticiler.first,
-                      );
+                      final secilen = yoneticiler.firstWhere(
+                          (y) => y['id'].toString() == seciliKisiId,
+                          orElse: () => yoneticiler.first);
                       final adSoyad =
-                          '${secilenProfil['ad'] ?? ''} ${secilenProfil['soyad'] ?? ''}'
+                          '${secilen['ad'] ?? ''} ${secilen['soyad'] ?? ''}'
+                              .trim();
+                      final unvan = (secilen['unvan'] ?? '').toString().trim();
+                      sorumluEtiketi =
+                          unvan.isNotEmpty ? '$adSoyad ($unvan)' : adSoyad;
+                    }
+
+                    // 2. Görevi Atayan (Oturumu Açık Olan) Kişinin Etiketi
+                    String atayanEtiketi = 'Sistem';
+                    if (aktifKullanici != null) {
+                      final adSoyad =
+                          '${aktifKullanici['ad'] ?? ''} ${aktifKullanici['soyad'] ?? ''}'
                               .trim();
                       final unvan =
-                          (secilenProfil['unvan'] ?? '').toString().trim();
-                      sorumluEtiketi =
+                          (aktifKullanici['unvan'] ?? '').toString().trim();
+                      atayanEtiketi =
                           unvan.isNotEmpty ? '$adSoyad ($unvan)' : adSoyad;
                     }
 
@@ -359,8 +348,10 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                       'tarih': tarihStr,
                       'durum': durum,
                       'oncelik': oncelik,
-                      'hedef_birim': hedefBirim,
-                      'olusturan_unvan': sorumluEtiketi,
+                      'hedef_birim':
+                          sorumluEtiketi, // Görevi alan kişi Sorumlu Birim yerine kaydediliyor
+                      'olusturan_unvan':
+                          atayanEtiketi, // Görevi atayan kişi otomatik kaydediliyor
                       'atanan_kisi_id': seciliKisiId,
                     };
 
@@ -380,7 +371,7 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                         hedefKullaniciId: seciliKisiId!,
                         faaliyetBaslik: baslikController.text.trim(),
                         tarih: tarihStr,
-                        birim: hedefBirim,
+                        birim: 'Yeni Görev',
                       );
                     }
 
@@ -405,7 +396,7 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
     String metin = "📌 *KOCAELİ GENÇ İHH YILLIK PLAN*\n\n";
     for (var f in faaliyetler) {
       metin +=
-          "🔹 *${f['baslik']}*\n📅 ${f['tarih']}\n📌 Durum: ${f['durum']} | Birim: ${f['hedef_birim']}\n👤 Sorumlu: ${f['olusturan_unvan']}\n\n";
+          "🔹 *${f['baslik']}*\n📅 ${f['tarih']}\n📌 Durum: ${f['durum']}\n🎯 Sorumlu: ${f['hedef_birim']}\n👤 Atayan: ${f['olusturan_unvan']}\n\n";
     }
     Clipboard.setData(ClipboardData(text: metin));
     ScaffoldMessenger.of(context).showSnackBar(
@@ -714,12 +705,14 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                                 Text('📅 Tarih: ${f['tarih'] ?? '-'}',
                                     style:
                                         const TextStyle(color: Colors.white70)),
+
+                                // UI DÜZENLEMESİ: Sorumlu ve Atayan olarak ayarlandı
                                 Text(
-                                    '📌 Öncelik: ${f['oncelik'] ?? 'Normal'} | Birim: ${f['hedef_birim'] ?? '-'}',
+                                    '📌 Öncelik: ${f['oncelik'] ?? 'Normal'} | 🎯 Sorumlu: ${f['hedef_birim'] ?? '-'}',
                                     style:
                                         const TextStyle(color: Colors.white70)),
                                 Text(
-                                    '👤 Sorumlu: ${f['olusturan_unvan'] ?? '-'}',
+                                    '👤 Atayan: ${f['olusturan_unvan'] ?? '-'}',
                                     style: const TextStyle(
                                         color: AppColors.accent, fontSize: 13)),
                               ],
