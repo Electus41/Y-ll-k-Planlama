@@ -1,6 +1,6 @@
 {
-    "name": "kocaeli_genc_ihh_takip",
-    "short_name": "kocaeli_genc_ihh_takip",
+    "name": "Kocaeli Genç İHH Planlama ve Takip Sistemi",
+    "short_name": "Kocaeli Genç İHH Planlama ve Takip Sistemi",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
