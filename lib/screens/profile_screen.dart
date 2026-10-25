@@ -53,8 +53,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
           final unvan = _profil?['unvan']?.toString() ?? '';
           // İl Başkanı ve Teşkilatlanma Başkanı süper admindir
-          _isAdmin =
-              (unvan == 'İl Başkanı' || unvan == 'Teşkilatlanma Başkanı');
+          _isAdmin = (unvan == 'İl Başkanı' ||
+              unvan == 'Teşkilatlanma Başkanı' ||
+              unvan == 'Gölge Başkan');
           _yukleniyor = false;
         });
       }

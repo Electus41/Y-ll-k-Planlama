@@ -33,7 +33,8 @@ class _UnitsScreenState extends State<UnitsScreen> {
       if (res != null && mounted) {
         setState(() {
           _isAdmin = (res['unvan'] == 'İl Başkanı' ||
-              res['unvan'] == 'Teşkilatlanma Başkanı');
+              res['unvan'] == 'Teşkilatlanma Başkanı' ||
+              res['unvan'] == 'Gölge Başkan');
         });
       }
     }

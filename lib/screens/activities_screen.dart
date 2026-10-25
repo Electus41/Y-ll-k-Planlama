@@ -168,7 +168,8 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
     if (!mounted) return;
 
     bool isAdmin = (aktifKullanici?['unvan'] == 'İl Başkanı' ||
-        aktifKullanici?['unvan'] == 'Teşkilatlanma Başkanı');
+        aktifKullanici?['unvan'] == 'Teşkilatlanma Başkanı' ||
+        aktifKullanici?['unvan'] == 'Gölge Başkan');
     String? kullaniciUnvani = aktifKullanici?['unvan'];
 
     final baslikController =

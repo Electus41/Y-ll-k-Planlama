@@ -47,8 +47,9 @@ class _KanbanScreenState extends State<KanbanScreen> {
           _kullaniciRol = data['yetki_seviyesi'] ?? 'Gönüllü';
           _kullaniciBirim = data['bagli_birim'] ?? '';
           final unvan = data['unvan'] ?? '';
-          _isAdmin =
-              (unvan == 'İl Başkanı' || unvan == 'Teşkilatlanma Başkanı');
+          _isAdmin = (unvan == 'İl Başkanı' ||
+              unvan == 'Teşkilatlanma Başkanı' ||
+              unvan == 'Gölge Başkan');
           _yetkilerYuklendi = true;
         });
       }

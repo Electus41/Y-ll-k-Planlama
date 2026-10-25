@@ -56,7 +56,8 @@ class _NotesScreenState extends State<NotesScreen> {
           _kullaniciBirim = profil['unvan'] ?? 'Bilinmeyen Birim';
           _isAdmin = (profil['yetki_seviyesi'] == 'Admin' ||
               profil['unvan'] == 'İl Başkanı' ||
-              profil['unvan'] == 'Teşkilatlanma Başkanı');
+              profil['unvan'] == 'Teşkilatlanma Başkanı' ||
+              profil['unvan'] == 'Gölge Başkan');
         }
       }
       await _notlariCek();
