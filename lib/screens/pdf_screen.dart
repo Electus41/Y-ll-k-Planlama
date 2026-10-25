@@ -34,7 +34,8 @@ class _PdfScreenState extends State<PdfScreen> {
 
       pdf.addPage(
         pw.MultiPage(
-          pageFormat: PdfPageFormat.a4,
+          pageFormat:
+              PdfPageFormat.a4.landscape, // Tablo sığsın diye yatay yaptık
           theme: pw.ThemeData.withFont(base: font, bold: boldFont),
           build: (context) => [
             pw.Header(
@@ -54,8 +55,10 @@ class _PdfScreenState extends State<PdfScreen> {
             pw.TableHelper.fromTextArray(
               headers: [
                 'Faaliyet Başlığı',
-                'Birim',
-                'Sorumlu',
+                'Sorumlu Birim',
+                'Sorumlu Kişi',
+                'Hedef Komisyon',
+                'Atayan',
                 'Tarih',
                 'Durum'
               ],
@@ -63,12 +66,15 @@ class _PdfScreenState extends State<PdfScreen> {
                   fontWeight: pw.FontWeight.bold, color: PdfColors.white),
               headerDecoration:
                   const pw.BoxDecoration(color: PdfColor.fromInt(0xFF1B4D3E)),
-              cellStyle: const pw.TextStyle(fontSize: 10),
+              cellStyle: const pw.TextStyle(fontSize: 9),
               data: liste
                   .map((f) => [
                         f['baslik']?.toString() ?? '-',
+                        f['olusturan_unvan']?.toString() ??
+                            '-', // Sorumlu Birim
+                        f['sorumlu_kisi_ad']?.toString() ?? '-',
                         f['hedef_birim']?.toString() ?? '-',
-                        f['olusturan_unvan']?.toString() ?? '-',
+                        f['atayan_ad']?.toString() ?? '-',
                         f['tarih']?.toString() ?? '-',
                         f['durum']?.toString() ?? '-',
                       ])
@@ -80,7 +86,6 @@ class _PdfScreenState extends State<PdfScreen> {
 
       final Uint8List pdfBytes = await pdf.save();
 
-      // Mobilde ve Web'de %100 çalışan paylaşım / indirme yöneticisi
       await Printing.sharePdf(
         bytes: pdfBytes,
         filename: 'Kocaeli_Genc_IHH_Rapor_$durumFiltresi.pdf',
@@ -113,18 +118,15 @@ class _PdfScreenState extends State<PdfScreen> {
             : Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Text(
-                    'Kurumsal Faaliyet Çıktısı Alın',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold),
-                  ),
+                  const Text('Kurumsal Faaliyet Çıktısı Alın',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
                   const Text(
-                    'İstediğiniz kapsamı seçerek tüm plan ve görevleri PDF tablosu olarak indirebilir veya paylaşabilirsiniz.',
-                    style: TextStyle(color: Colors.white60, fontSize: 13),
-                  ),
+                      'İstediğiniz kapsamı seçerek tüm plan ve görevleri PDF tablosu olarak indirebilir veya paylaşabilirsiniz.',
+                      style: TextStyle(color: Colors.white60, fontSize: 13)),
                   const SizedBox(height: 24),
                   _raporButonu('Tüm Yıllık Faaliyet Raporu (Tümü)',
                       Icons.assessment, Colors.tealAccent, 'Tümü'),

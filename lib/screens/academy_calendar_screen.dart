@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/constants.dart';
 import '../core/notification_service.dart';
 
@@ -12,6 +13,17 @@ class AcademyCalendarScreen extends StatefulWidget {
 class _AcademyCalendarScreenState extends State<AcademyCalendarScreen> {
   String seciliAyFiltresi = 'Tümü';
   String seciliYilFiltresi = '2026';
+
+  // YENİ: Komisyon Filtresi
+  String _seciliKomisyon = 'Tümü';
+  final List<String> _komisyonFiltreleri = [
+    'Tümü',
+    'İlkokul Komisyonu',
+    'Ortaokul Komisyonu',
+    'Lise Komisyonu',
+    'Üniversite Komisyonu',
+    'Genel'
+  ];
 
   final List<String> aylar = [
     'Ocak',
@@ -44,7 +56,7 @@ class _AcademyCalendarScreenState extends State<AcademyCalendarScreen> {
       labelText: label,
       labelStyle: const TextStyle(color: Colors.white54, fontSize: 14),
       prefixIcon:
-          Icon(icon, color: Colors.tealAccent.withValues(alpha: 0.7), size: 20),
+          Icon(icon, color: Colors.tealAccent.withOpacity(0.7), size: 20),
       filled: true,
       fillColor: AppColors.inputFill,
       border: OutlineInputBorder(
@@ -101,7 +113,7 @@ class _AcademyCalendarScreenState extends State<AcademyCalendarScreen> {
         false;
 
     if (confirm) {
-      await supabase.from('faaliyetler').delete().eq('id', id);
+      await Supabase.instance.client.from('faaliyetler').delete().eq('id', id);
       if (mounted) {
         setState(() {});
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -111,31 +123,39 @@ class _AcademyCalendarScreenState extends State<AcademyCalendarScreen> {
     }
   }
 
+  // ANA EKRANIN AYNISI (Yetki ve Sorumlu mantığı ile tam senkronize)
   Future<void> _planEkleModalAc({Map<String, dynamic>? mevcutFaaliyet}) async {
     List<Map<String, dynamic>> yoneticiler = [];
+    List<Map<String, dynamic>> tumBirimler = [];
     Map<String, dynamic>? aktifKullanici;
 
     try {
-      final profilData = await supabase
+      final profilData = await Supabase.instance.client
           .from('profiller')
           .select('id, ad, soyad, unvan')
           .order('ad');
       yoneticiler = List<Map<String, dynamic>>.from(profilData);
-      final currentUser = supabase.auth.currentUser;
+      final currentUser = Supabase.instance.client.auth.currentUser;
       if (currentUser != null) {
         aktifKullanici = yoneticiler.firstWhere(
             (y) => y['id'].toString() == currentUser.id,
             orElse: () => {'ad': 'Yönetici', 'soyad': '', 'unvan': ''});
       }
-    } catch (e) {
-      debugPrint('Profiller çekilemedi: $e');
-    }
+      final birimData = await Supabase.instance.client
+          .from('birimler')
+          .select('id, ad, kategori')
+          .order('sira');
+      tumBirimler = List<Map<String, dynamic>>.from(birimData);
+    } catch (e) {}
 
     if (!mounted) return;
 
+    bool isAdmin = (aktifKullanici?['unvan'] == 'İl Başkanı' ||
+        aktifKullanici?['unvan'] == 'Teşkilatlanma Başkanı');
+    String? kullaniciUnvani = aktifKullanici?['unvan'];
+
     final baslikController =
         TextEditingController(text: mevcutFaaliyet?['baslik'] ?? '');
-
     bool aralikliTarih = mevcutFaaliyet != null &&
         mevcutFaaliyet['tarih'].toString().contains('-');
 
@@ -143,10 +163,7 @@ class _AcademyCalendarScreenState extends State<AcademyCalendarScreen> {
     String seciliGun = sTarih.day.toString();
     String seciliAy = aylar[sTarih.month - 1];
     String seciliYil = sTarih.year.toString();
-
-    String bitisGun = seciliGun;
-    String bitisAy = seciliAy;
-    String bitisYil = seciliYil;
+    String bitisGun = seciliGun, bitisAy = seciliAy, bitisYil = seciliYil;
 
     if (mevcutFaaliyet != null && mevcutFaaliyet['tarih'] != null) {
       String tamTarih = mevcutFaaliyet['tarih'].toString();
@@ -183,8 +200,21 @@ class _AcademyCalendarScreenState extends State<AcademyCalendarScreen> {
 
     String durum = mevcutFaaliyet?['durum'] ?? 'Yapılacak';
     String oncelik = mevcutFaaliyet?['oncelik'] ?? 'Normal';
-    String? seciliKisiId = mevcutFaaliyet?['atanan_kisi_id']?.toString() ??
-        (yoneticiler.isNotEmpty ? yoneticiler.first['id'].toString() : null);
+
+    String? seciliKisiId = mevcutFaaliyet?['atanan_kisi_id']?.toString();
+    String? seciliHedefId = mevcutFaaliyet?['hedef_birim_id'];
+    String? seciliHedefAd = mevcutFaaliyet?['hedef_birim'];
+    String? seciliSorumluId = mevcutFaaliyet?['sorumlu_birim_id'];
+    String? seciliSorumluAd = mevcutFaaliyet?['olusturan_unvan'];
+
+    if (!isAdmin && seciliSorumluId == null && kullaniciUnvani != null) {
+      final b =
+          tumBirimler.where((x) => x['ad'] == kullaniciUnvani).firstOrNull;
+      if (b != null) {
+        seciliSorumluId = b['id'];
+        seciliSorumluAd = b['ad'];
+      }
+    }
 
     bool isUpdate = mevcutFaaliyet != null;
 
@@ -216,31 +246,114 @@ class _AcademyCalendarScreenState extends State<AcademyCalendarScreen> {
                 ),
                 const SizedBox(height: 16),
                 TextField(
-                  controller: baslikController,
+                    controller: baslikController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: _koyuInputDekorasyonu(
+                        label: 'Plan / Kamp / Etkinlik Adı',
+                        icon: Icons.description)),
+                const SizedBox(height: 16),
+                if (isAdmin)
+                  DropdownButtonFormField<String>(
+                    value: seciliSorumluId,
+                    items: tumBirimler
+                        .map((b) => DropdownMenuItem<String>(
+                            value: b['id'],
+                            child:
+                                Text(b['ad'], overflow: TextOverflow.ellipsis)))
+                        .toList(),
+                    onChanged: (val) {
+                      setModalState(() {
+                        seciliSorumluId = val;
+                        seciliSorumluAd =
+                            tumBirimler.firstWhere((b) => b['id'] == val)['ad'];
+                      });
+                    },
+                    dropdownColor: AppColors.inputFill,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: _koyuInputDekorasyonu(
+                        label: 'Sorumlu Birim (Görevlendirilen)',
+                        icon: Icons.account_balance),
+                  )
+                else
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                        color: AppColors.inputFill,
+                        borderRadius: BorderRadius.circular(10)),
+                    child: Row(
+                      children: [
+                        Icon(Icons.lock,
+                            color: Colors.tealAccent.withOpacity(0.7),
+                            size: 20),
+                        const SizedBox(width: 16),
+                        Text(
+                            'Sorumlu Birim: ${seciliSorumluAd ?? 'Belirtilmedi'}',
+                            style: const TextStyle(
+                                color: Colors.white70, fontSize: 14)),
+                      ],
+                    ),
+                  ),
+                const SizedBox(height: 16),
+                if (yoneticiler.isNotEmpty)
+                  DropdownButtonFormField<String>(
+                    value: seciliKisiId,
+                    isExpanded: true,
+                    items: [
+                      const DropdownMenuItem<String>(
+                          value: null,
+                          child: Text('Kişi Seçilmedi (Tüm Birim Sorumlu)')),
+                      ...yoneticiler.map((y) {
+                        final adSoyad =
+                            '${y['ad'] ?? ''} ${y['soyad'] ?? ''}'.trim();
+                        final unvan = (y['unvan'] ?? '').toString().trim();
+                        final etiket =
+                            unvan.isNotEmpty ? '$adSoyad ($unvan)' : adSoyad;
+                        return DropdownMenuItem<String>(
+                            value: y['id'].toString(),
+                            child: Text(etiket.isEmpty ? 'Yönetici' : etiket,
+                                overflow: TextOverflow.ellipsis));
+                      }),
+                    ],
+                    onChanged: (val) => setModalState(() => seciliKisiId = val),
+                    dropdownColor: AppColors.inputFill,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: _koyuInputDekorasyonu(
+                        label: 'Özel Sorumlu Kişi (Opsiyonel)',
+                        icon: Icons.person_pin_circle),
+                  ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<String>(
+                  value: seciliHedefId,
+                  items: tumBirimler
+                      .where((b) => b['kategori'] == 'Hedef Kitle Komisyonu')
+                      .map((b) => DropdownMenuItem<String>(
+                          value: b['id'],
+                          child:
+                              Text(b['ad'], overflow: TextOverflow.ellipsis)))
+                      .toList(),
+                  onChanged: (val) {
+                    setModalState(() {
+                      seciliHedefId = val;
+                      seciliHedefAd =
+                          tumBirimler.firstWhere((b) => b['id'] == val)['ad'];
+                    });
+                  },
+                  dropdownColor: AppColors.inputFill,
                   style: const TextStyle(color: Colors.white),
                   decoration: _koyuInputDekorasyonu(
-                      label: 'Plan / Kamp / Etkinlik Adı',
-                      icon: Icons.description),
+                      label: 'Faaliyet Alanı / Hedef Komisyon',
+                      icon: Icons.groups),
                 ),
                 const SizedBox(height: 16),
-
                 SwitchListTile(
                   title: const Text('Tarih Aralığı Seç (Kamp, Sınav vb.)',
                       style: TextStyle(color: Colors.white, fontSize: 14)),
-                  subtitle: const Text(
-                      'Birden fazla gün sürecek etkinlikler için açın',
-                      style: TextStyle(color: Colors.white54, fontSize: 12)),
                   value: aralikliTarih,
                   activeColor: AppColors.accent,
                   contentPadding: EdgeInsets.zero,
-                  onChanged: (val) {
-                    setModalState(() {
-                      aralikliTarih = val;
-                    });
-                  },
+                  onChanged: (val) => setModalState(() => aralikliTarih = val),
                 ),
                 const SizedBox(height: 8),
-
                 Text(aralikliTarih ? 'Başlangıç Tarihi:' : 'Faaliyet Tarihi:',
                     style: const TextStyle(
                         color: Colors.white70,
@@ -274,7 +387,6 @@ class _AcademyCalendarScreenState extends State<AcademyCalendarScreen> {
                                 setModalState(() => seciliYil = val!))),
                   ],
                 ),
-
                 if (aralikliTarih) ...[
                   const SizedBox(height: 16),
                   const Text('Bitiş Tarihi:',
@@ -313,32 +425,6 @@ class _AcademyCalendarScreenState extends State<AcademyCalendarScreen> {
                   ),
                 ],
                 const SizedBox(height: 16),
-
-                if (yoneticiler.isNotEmpty)
-                  DropdownButtonFormField<String>(
-                    value: seciliKisiId,
-                    isExpanded: true,
-                    items: yoneticiler.map((y) {
-                      final adSoyad =
-                          '${y['ad'] ?? ''} ${y['soyad'] ?? ''}'.trim();
-                      final unvan = (y['unvan'] ?? '').toString().trim();
-                      return DropdownMenuItem<String>(
-                        value: y['id'].toString(),
-                        child: Text(
-                            unvan.isNotEmpty ? '$adSoyad ($unvan)' : adSoyad,
-                            overflow: TextOverflow.ellipsis),
-                      );
-                    }).toList(),
-                    onChanged: (val) => setModalState(() => seciliKisiId = val),
-                    dropdownColor: AppColors.inputFill,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: _koyuInputDekorasyonu(
-                        label: 'Görev Atanan Yönetici (Bildirim Gider)',
-                        icon: Icons.person_pin_circle),
-                  ),
-                const SizedBox(height: 16),
-
-                // Takvimden eklenen işlerin doğrudan Kanban'a (Yapılacak) düşmesi için durum seçimi:
                 DropdownButtonFormField<String>(
                   value: durum,
                   items: ['Yapılacak', 'Yapılıyor', 'Tamamlandı']
@@ -351,7 +437,6 @@ class _AcademyCalendarScreenState extends State<AcademyCalendarScreen> {
                       label: 'Süreç / Kanban Durumu',
                       icon: Icons.stacked_bar_chart),
                 ),
-
                 const SizedBox(height: 32),
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
@@ -363,50 +448,59 @@ class _AcademyCalendarScreenState extends State<AcademyCalendarScreen> {
                   ),
                   onPressed: () async {
                     if (baslikController.text.trim().isEmpty) return;
-
-                    String tarihStr = '$seciliGun $seciliAy $seciliYil';
-                    if (aralikliTarih) {
-                      tarihStr += ' - $bitisGun $bitisAy $bitisYil';
+                    if (seciliHedefId == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                          content: Text('Lütfen Hedef Komisyon seçiniz!'),
+                          backgroundColor: Colors.orange));
+                      return;
                     }
 
-                    String sorumluEtiketi = 'Bilinmiyor';
-                    if (seciliKisiId != null && yoneticiler.isNotEmpty) {
+                    String tarihStr = '$seciliGun $seciliAy $seciliYil';
+                    if (aralikliTarih)
+                      tarihStr += ' - $bitisGun $bitisAy $bitisYil';
+
+                    final atayanAdSoyad =
+                        '${aktifKullanici?['ad'] ?? ''} ${aktifKullanici?['soyad'] ?? ''}'
+                            .trim();
+                    final atayanUnvan = aktifKullanici?['unvan'] ?? '';
+                    final atayanTamAd = atayanUnvan.isNotEmpty
+                        ? '$atayanAdSoyad ($atayanUnvan)'
+                        : atayanAdSoyad;
+
+                    String sorumluKisiAd = '';
+                    if (seciliKisiId != null) {
                       final secilen = yoneticiler.firstWhere(
                           (y) => y['id'].toString() == seciliKisiId,
                           orElse: () => yoneticiler.first);
-                      final unvan = (secilen['unvan'] ?? '').toString().trim();
-                      sorumluEtiketi = unvan.isNotEmpty
-                          ? '${secilen['ad']} ${secilen['soyad']} ($unvan)'
-                          : '${secilen['ad']} ${secilen['soyad']}';
+                      sorumluKisiAd =
+                          '${secilen['ad'] ?? ''} ${secilen['soyad'] ?? ''}'
+                              .trim();
                     }
 
-                    String atayanEtiketi = 'Sistem';
-                    if (aktifKullanici != null) {
-                      final unvan =
-                          (aktifKullanici['unvan'] ?? '').toString().trim();
-                      atayanEtiketi = unvan.isNotEmpty
-                          ? '${aktifKullanici['ad']} ${aktifKullanici['soyad']} ($unvan)'
-                          : '${aktifKullanici['ad']} ${aktifKullanici['soyad']}';
-                    }
-
-                    final kayitVerisi = {
+                    final Map<String, dynamic> kayitVerisi = {
                       'baslik': baslikController.text.trim(),
                       'tarih': tarihStr,
                       'durum': durum,
                       'oncelik': oncelik,
-                      'hedef_birim': sorumluEtiketi,
-                      'olusturan_unvan': atayanEtiketi,
                       'atanan_kisi_id': seciliKisiId,
-                      'kategori': 'Genel',
+                      'sorumlu_kisi_ad': sorumluKisiAd,
+                      'atayan_ad': atayanTamAd,
+                      'hedef_birim_id': seciliHedefId,
+                      'hedef_birim': seciliHedefAd,
+                      'sorumlu_birim_id': seciliSorumluId,
+                      'olusturan_unvan': seciliSorumluAd,
                     };
 
                     if (isUpdate) {
-                      await supabase
+                      await Supabase.instance.client
                           .from('faaliyetler')
                           .update(kayitVerisi)
                           .eq('id', mevcutFaaliyet['id']);
                     } else {
-                      await supabase.from('faaliyetler').insert(kayitVerisi);
+                      kayitVerisi['kategori'] = 'Genel';
+                      await Supabase.instance.client
+                          .from('faaliyetler')
+                          .insert(kayitVerisi);
                     }
 
                     if (seciliKisiId != null && !isUpdate) {
@@ -476,37 +570,76 @@ class _AcademyCalendarScreenState extends State<AcademyCalendarScreen> {
             color: AppColors.background,
             width: double.infinity,
             padding: const EdgeInsets.symmetric(vertical: 8),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: ['Tümü', ...aylar].map((ay) {
-                  final isSelected = seciliAyFiltresi == ay;
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: ChoiceChip(
-                      label: Text(ay),
-                      selected: isSelected,
-                      onSelected: (val) =>
-                          setState(() => seciliAyFiltresi = ay),
-                      backgroundColor: Colors.transparent,
-                      selectedColor: AppColors.accent,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          side: const BorderSide(color: Colors.white24)),
-                      labelStyle: TextStyle(
-                          color: isSelected ? Colors.black : Colors.white70,
-                          fontWeight:
-                              isSelected ? FontWeight.bold : FontWeight.normal),
-                    ),
-                  );
-                }).toList(),
-              ),
+            child: Column(
+              children: [
+                // 1. Ay Filtresi
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    children: ['Tümü', ...aylar].map((ay) {
+                      final isSelected = seciliAyFiltresi == ay;
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: ChoiceChip(
+                          label: Text(ay),
+                          selected: isSelected,
+                          onSelected: (val) =>
+                              setState(() => seciliAyFiltresi = ay),
+                          backgroundColor: Colors.transparent,
+                          selectedColor: AppColors.accent,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              side: const BorderSide(color: Colors.white24)),
+                          labelStyle: TextStyle(
+                              color: isSelected ? Colors.black : Colors.white70,
+                              fontWeight: isSelected
+                                  ? FontWeight.bold
+                                  : FontWeight.normal),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+                const SizedBox(height: 8),
+
+                // YENİ: 2. Komisyon Filtresi
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    children: _komisyonFiltreleri.map((komisyon) {
+                      final isSelected = _seciliKomisyon == komisyon;
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: ChoiceChip(
+                          label: Text(komisyon),
+                          selected: isSelected,
+                          onSelected: (val) =>
+                              setState(() => _seciliKomisyon = komisyon),
+                          backgroundColor: Colors.transparent,
+                          selectedColor: AppColors.card,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              side: const BorderSide(color: Colors.white24)),
+                          labelStyle: TextStyle(
+                              color: isSelected
+                                  ? AppColors.accent
+                                  : Colors.white70,
+                              fontWeight: isSelected
+                                  ? FontWeight.bold
+                                  : FontWeight.normal),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ],
             ),
           ),
           Expanded(
             child: StreamBuilder<List<Map<String, dynamic>>>(
-              stream: supabase
+              stream: Supabase.instance.client
                   .from('faaliyetler')
                   .stream(primaryKey: ['id'])
                   .order('created_at', ascending: false)
@@ -528,6 +661,11 @@ class _AcademyCalendarScreenState extends State<AcademyCalendarScreen> {
                   if (!tarih.contains(seciliYilFiltresi)) return false;
                   if (seciliAyFiltresi != 'Tümü' &&
                       !tarih.contains(seciliAyFiltresi)) return false;
+
+                  // Hedef Komisyon Filtresini Uygula
+                  if (_seciliKomisyon != 'Tümü' &&
+                      f['hedef_birim'] != _seciliKomisyon) return false;
+
                   return true;
                 }).toList();
 
@@ -576,7 +714,7 @@ class _AcademyCalendarScreenState extends State<AcademyCalendarScreen> {
                               width: 54,
                               height: 54,
                               decoration: BoxDecoration(
-                                  color: Colors.teal.withValues(alpha: 0.2),
+                                  color: Colors.teal.withOpacity(0.2),
                                   shape: BoxShape.circle),
                               alignment: Alignment.center,
                               child: Text(gunGosterimi,
@@ -596,39 +734,40 @@ class _AcademyCalendarScreenState extends State<AcademyCalendarScreen> {
                                           color: Colors.white,
                                           fontSize: 16,
                                           fontWeight: FontWeight.bold)),
-                                  const SizedBox(height: 4),
+                                  const SizedBox(height: 6),
                                   Text(
-                                      '${f['tarih']} • Sorumlu: ${f['hedef_birim'] ?? ''}',
+                                      '🏢 Sorumlu: ${f['olusturan_unvan'] ?? 'Belirtilmedi'}',
                                       style: const TextStyle(
-                                          color: Colors.white54, fontSize: 12)),
+                                          color: Colors.white70, fontSize: 12)),
+                                  if (f['sorumlu_kisi_ad'] != null &&
+                                      f['sorumlu_kisi_ad']
+                                          .toString()
+                                          .isNotEmpty)
+                                    Text('👤 Kişi: ${f['sorumlu_kisi_ad']}',
+                                        style: const TextStyle(
+                                            color: Colors.white70,
+                                            fontSize: 12)),
+                                  Text(
+                                      '🎯 Hedef: ${f['hedef_birim'] ?? 'Genel'}',
+                                      style: const TextStyle(
+                                          color: Colors.orangeAccent,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold)),
                                   const SizedBox(height: 4),
-                                  Row(
-                                    children: [
-                                      const Icon(Icons.person,
-                                          color: Colors.blueAccent, size: 14),
-                                      const SizedBox(width: 4),
-                                      Expanded(
-                                          child: Text(
-                                              'Atayan: ${f['olusturan_unvan'] ?? ''}',
-                                              style: const TextStyle(
-                                                  color: Colors.blueAccent,
-                                                  fontSize: 12),
-                                              overflow: TextOverflow.ellipsis)),
-                                    ],
-                                  ),
+                                  Text('✍️ Atayan: ${f['atayan_ad'] ?? '-'}',
+                                      style: const TextStyle(
+                                          color: AppColors.accent,
+                                          fontSize: 12)),
                                 ],
                               ),
                             ),
-
-                            // DÜZENLE VE SİL BUTONLARI EKLENDİ
                             Column(
                               children: [
                                 Container(
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 10, vertical: 4),
                                   decoration: BoxDecoration(
-                                      color:
-                                          Colors.white.withValues(alpha: 0.1),
+                                      color: Colors.white.withOpacity(0.1),
                                       borderRadius: BorderRadius.circular(8)),
                                   child: Text(f['durum'] ?? 'Yapılacak',
                                       style: const TextStyle(

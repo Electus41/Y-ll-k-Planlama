@@ -13,6 +13,7 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   Map<String, dynamic>? _profil;
+  List<Map<String, dynamic>> _birimler = []; // Veritabanından gelecek birimler
   bool _yukleniyor = true;
   bool _isAdmin = false;
 
@@ -27,13 +28,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (user == null) return;
 
     try {
+      // Hem profili hem de dinamik birim listesini Supabase'den çekiyoruz
       final data = await supabase
           .from('profiller')
           .select()
           .eq('id', user.id)
           .maybeSingle();
+      final birimData = await supabase
+          .from('teskilat_birimleri')
+          .select('birim_adi, kategori')
+          .order('kategori');
+
       if (mounted) {
         setState(() {
+          _birimler = List<Map<String, dynamic>>.from(birimData);
           _profil = data ??
               {
                 'ad': user.userMetadata?['ad'] ?? '',
@@ -44,6 +52,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               };
 
           final unvan = _profil?['unvan']?.toString() ?? '';
+          // İl Başkanı ve Teşkilatlanma Başkanı süper admindir
           _isAdmin =
               (unvan == 'İl Başkanı' || unvan == 'Teşkilatlanma Başkanı');
           _yukleniyor = false;
@@ -73,13 +82,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 content: Text('Bildirimler başarıyla aktifleştirildi!'),
                 backgroundColor: Colors.green));
           }
-        }
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text(
-                  'OneSignal ID alınamadı. Bildirim izinlerini kontrol edin.'),
-              backgroundColor: Colors.orange));
         }
       }
     } catch (e) {
@@ -126,175 +128,156 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  // YENİ RBAC MİMARİSİNE GÖRE DÜZENLEME MODALI
   Future<void> _baskaKullaniciDuzenleModal(
       Map<String, dynamic> kullanici) async {
     final adCtrl = TextEditingController(text: kullanici['ad'] ?? '');
     final soyadCtrl = TextEditingController(text: kullanici['soyad'] ?? '');
-    final unvanCtrl = TextEditingController(text: kullanici['unvan'] ?? '');
     final telCtrl = TextEditingController(text: kullanici['telefon'] ?? '');
 
+    String seciliYetki = kullanici['yetki_seviyesi'] ?? 'Gönüllü';
+    String? seciliBirim = kullanici['unvan']; // Mevcut unvanı seçili göster
+
+    // Eğer eski elle girilmiş unvan yeni listede yoksa boşaltalım ki hata vermesin
+    if (_birimler.isNotEmpty &&
+        !_birimler.any((b) => b['birim_adi'] == seciliBirim)) {
+      seciliBirim = null;
+    }
+
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF161C1A),
-        title: const Text('Kullanıcı Bilgilerini Güncelle',
-            style: TextStyle(color: Colors.white, fontSize: 17)),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                  controller: adCtrl,
+      builder: (ctx) => StatefulBuilder(
+          // Dropdown güncellemeleri için StatefulBuilder kullanıyoruz
+          builder: (context, setModalState) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF161C1A),
+          title: const Text('Kullanıcı Yetkilerini Güncelle',
+              style: TextStyle(color: Colors.white, fontSize: 17)),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                    controller: adCtrl,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                        labelText: 'Ad',
+                        labelStyle: TextStyle(color: Colors.white54))),
+                const SizedBox(height: 10),
+                TextField(
+                    controller: soyadCtrl,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                        labelText: 'Soyad',
+                        labelStyle: TextStyle(color: Colors.white54))),
+                const SizedBox(height: 10),
+                TextField(
+                    controller: telCtrl,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                        labelText: 'Telefon',
+                        labelStyle: TextStyle(color: Colors.white54))),
+                const SizedBox(height: 16),
+
+                // Yetki Seviyesi Dropdown
+                DropdownButtonFormField<String>(
+                  value: ['İl', 'İlçe', 'Gönüllü'].contains(seciliYetki)
+                      ? seciliYetki
+                      : 'Gönüllü',
+                  dropdownColor: const Color(0xFF1E292B),
                   style: const TextStyle(color: Colors.white),
                   decoration: const InputDecoration(
-                      labelText: 'Ad',
-                      labelStyle: TextStyle(color: Colors.white54))),
-              const SizedBox(height: 10),
-              TextField(
-                  controller: soyadCtrl,
+                      labelText: 'Yetki Seviyesi',
+                      labelStyle: TextStyle(color: Colors.orangeAccent)),
+                  items: ['İl', 'İlçe', 'Gönüllü']
+                      .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                      .toList(),
+                  onChanged: (v) => setModalState(() => seciliYetki = v!),
+                ),
+                const SizedBox(height: 16),
+
+                // Teşkilat Birimi Dropdown (Supabase'den dinamik çekilen)
+                DropdownButtonFormField<String>(
+                  value: seciliBirim,
+                  dropdownColor: const Color(0xFF1E292B),
                   style: const TextStyle(color: Colors.white),
                   decoration: const InputDecoration(
-                      labelText: 'Soyad',
-                      labelStyle: TextStyle(color: Colors.white54))),
-              const SizedBox(height: 10),
-              TextField(
-                  controller: unvanCtrl,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(
-                      labelText: 'Kurumsal Unvan',
-                      labelStyle: TextStyle(color: Colors.white54))),
-              const SizedBox(height: 10),
-              TextField(
-                  controller: telCtrl,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(
-                      labelText: 'Telefon',
-                      labelStyle: TextStyle(color: Colors.white54))),
-            ],
+                      labelText: 'Bağlı Olduğu Birim',
+                      labelStyle: TextStyle(color: Colors.orangeAccent)),
+                  items: _birimler
+                      .map((b) => DropdownMenuItem<String>(
+                          value: b['birim_adi'], child: Text(b['birim_adi'])))
+                      .toList(),
+                  onChanged: (v) => setModalState(() => seciliBirim = v),
+                ),
+              ],
+            ),
           ),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child:
-                  const Text('İptal', style: TextStyle(color: Colors.white54))),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.accent,
-                foregroundColor: Colors.black),
-            onPressed: () async {
-              try {
-                await supabase.from('profiller').update({
-                  'ad': adCtrl.text.trim(),
-                  'soyad': soyadCtrl.text.trim(),
-                  'unvan': unvanCtrl.text.trim(),
-                  'telefon': telCtrl.text.trim(),
-                }).eq('id', kullanici['id']);
-
-                if (!ctx.mounted) return;
-                Navigator.pop(ctx);
-
-                // Eğer güncellenen kullanıcı bizzat kendimse profili de yenile
-                if (kullanici['id'].toString() ==
-                    supabase.auth.currentUser?.id) {
-                  _profilGetir();
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('İptal',
+                    style: TextStyle(color: Colors.white54))),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.accent,
+                  foregroundColor: Colors.black),
+              onPressed: () async {
+                if (seciliBirim == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('Lütfen birim seçin!'),
+                      backgroundColor: Colors.orange));
+                  return;
                 }
+                try {
+                  final sonuc = await supabase
+                      .from('profiller')
+                      .update({
+                        'ad': adCtrl.text.trim(),
+                        'soyad': soyadCtrl.text.trim(),
+                        'telefon': telCtrl.text.trim(),
+                        'unvan':
+                            seciliBirim, // Eski yapı bozulmasın diye unvan'ı da güncelliyoruz
+                        'bagli_birim': seciliBirim,
+                        'yetki_seviyesi': seciliYetki,
+                      })
+                      .eq('id', kullanici['id'])
+                      .select();
 
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                    content: Text('Kullanıcı başarıyla güncellendi!'),
-                    backgroundColor: Colors.green));
-              } catch (e) {
-                if (!ctx.mounted) return;
-                Navigator.pop(ctx);
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                    content: Text(
-                        'Güncelleme reddedildi (Supabase yetkisi engelliyor olabilir).'),
-                    backgroundColor: Colors.red));
-              }
-            },
-            child: const Text('Güncelle',
-                style: TextStyle(fontWeight: FontWeight.bold)),
-          ),
-        ],
-      ),
-    );
-  }
+                  if (!ctx.mounted) return;
+                  Navigator.pop(ctx);
 
-  Future<void> _profilDuzenleModal() async {
-    final adCtrl = TextEditingController(text: _profil?['ad'] ?? '');
-    final soyadCtrl = TextEditingController(text: _profil?['soyad'] ?? '');
-    final unvanCtrl = TextEditingController(text: _profil?['unvan'] ?? '');
-    final telCtrl = TextEditingController(text: _profil?['telefon'] ?? '');
+                  if (sonuc.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                        content: Text('Yetki hatası: RLS engelledi!'),
+                        backgroundColor: Colors.orange));
+                    return;
+                  }
 
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF161C1A),
-        title: const Text('Profil Bilgilerini Güncelle',
-            style: TextStyle(color: Colors.white, fontSize: 17)),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                  controller: adCtrl,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(
-                      labelText: 'Ad',
-                      labelStyle: TextStyle(color: Colors.white54))),
-              const SizedBox(height: 10),
-              TextField(
-                  controller: soyadCtrl,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(
-                      labelText: 'Soyad',
-                      labelStyle: TextStyle(color: Colors.white54))),
-              const SizedBox(height: 10),
-              TextField(
-                  controller: unvanCtrl,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(
-                      labelText: 'Kurumsal Unvan',
-                      labelStyle: TextStyle(color: Colors.white54))),
-              const SizedBox(height: 10),
-              TextField(
-                  controller: telCtrl,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(
-                      labelText: 'Telefon',
-                      labelStyle: TextStyle(color: Colors.white54))),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child:
-                  const Text('İptal', style: TextStyle(color: Colors.white54))),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.accent,
-                foregroundColor: Colors.black),
-            onPressed: () async {
-              final user = supabase.auth.currentUser;
-              if (user == null) return;
-              await supabase.from('profiller').upsert({
-                'id': user.id,
-                'ad': adCtrl.text.trim(),
-                'soyad': soyadCtrl.text.trim(),
-                'unvan': unvanCtrl.text.trim(),
-                'telefon': telCtrl.text.trim(),
-                'email': user.email,
-              });
-              if (!ctx.mounted) return;
-              Navigator.pop(ctx);
-              _profilGetir();
-            },
-            child: const Text('Güncelle',
-                style: TextStyle(fontWeight: FontWeight.bold)),
-          ),
-        ],
-      ),
+                  if (kullanici['id'].toString() ==
+                      supabase.auth.currentUser?.id) {
+                    _profilGetir();
+                  } else {
+                    setState(() {});
+                  }
+
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('Kullanıcı başarıyla güncellendi!'),
+                      backgroundColor: Colors.green));
+                } catch (e) {
+                  if (!ctx.mounted) return;
+                  Navigator.pop(ctx);
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                      content: Text('Güncelleme hatası: $e'),
+                      backgroundColor: Colors.red));
+                }
+              },
+              child: const Text('Güncelle',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ],
+        );
+      }),
     );
   }
 
@@ -307,16 +290,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
     await supabase.auth.signOut();
     if (!mounted) return;
     Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(builder: (context) => const LoginScreen()),
-      (route) => false,
-    );
+        context,
+        MaterialPageRoute(builder: (context) => const LoginScreen()),
+        (route) => false);
   }
 
   @override
   Widget build(BuildContext context) {
     final tamAd = '${_profil?['ad'] ?? ''} ${_profil?['soyad'] ?? ''}'.trim();
     final basHarf = tamAd.isNotEmpty ? tamAd[0].toUpperCase() : 'Y';
+    final yetki = _profil?['yetki_seviyesi'] ?? 'Gönüllü';
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -325,11 +308,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
             style: TextStyle(color: Colors.white, fontSize: 16)),
         backgroundColor: AppColors.secondary,
         iconTheme: const IconThemeData(color: Colors.white),
-        actions: [
-          IconButton(
-              icon: const Icon(Icons.edit, color: AppColors.accent),
-              onPressed: _profilDuzenleModal),
-        ],
       ),
       body: _yukleniyor
           ? const Center(
@@ -354,20 +332,45 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           fontSize: 22,
                           fontWeight: FontWeight.bold)),
                   const SizedBox(height: 6),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                    decoration: BoxDecoration(
-                        color: AppColors.accent.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(20)),
-                    child: Text(
-                      _profil?['unvan']?.toString().isNotEmpty == true
-                          ? _profil!['unvan']
-                          : 'Teşkilat Yöneticisi',
-                      style: const TextStyle(
-                          color: AppColors.accent, fontWeight: FontWeight.w600),
-                    ),
+
+                  // Unvan ve Yetki Rozetleri
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 6),
+                        decoration: BoxDecoration(
+                            color: AppColors.accent.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(20)),
+                        child: Text(
+                          _profil?['unvan']?.toString().isNotEmpty == true
+                              ? _profil!['unvan']
+                              : 'Teşkilat Yöneticisi',
+                          style: const TextStyle(
+                              color: AppColors.accent,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                            color: Colors.orangeAccent.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(20)),
+                        child: Text(
+                          yetki,
+                          style: const TextStyle(
+                              color: Colors.orangeAccent,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12),
+                        ),
+                      ),
+                    ],
                   ),
+
                   const SizedBox(height: 32),
                   _bilgiSatiri(Icons.email_outlined, 'E-Posta Adresi',
                       supabase.auth.currentUser?.email ?? '-'),
@@ -380,16 +383,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           : 'Belirtilmedi'),
                   const SizedBox(height: 12),
 
-                  // OneSignal Bildirim Satırı (Tıklanabilir yapıldı)
                   GestureDetector(
                     onTap: _oneSignalCihazKaydet,
                     child: _bilgiSatiri(
-                      Icons.notifications_active_outlined,
-                      'Anlık Bildirim Durumu',
-                      _profil?['onesignal_id'] != null
-                          ? 'Aktif (Cihaz Eşleşti)'
-                          : 'Bekleniyor (Aktifleştirmek İçin Tıklayın)',
-                    ),
+                        Icons.notifications_active_outlined,
+                        'Anlık Bildirim Durumu',
+                        _profil?['onesignal_id'] != null
+                            ? 'Aktif (Cihaz Eşleşti)'
+                            : 'Bekleniyor (Aktifleştirmek İçin Tıklayın)'),
                   ),
 
                   const SizedBox(height: 40),
@@ -398,11 +399,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     height: 52,
                     child: ElevatedButton.icon(
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.redAccent.shade700,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                      ),
+                          backgroundColor: Colors.redAccent.shade700,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12))),
                       onPressed: _cikisYap,
                       icon: const Icon(Icons.logout),
                       label: const Text('Oturumu Kapat',
@@ -411,14 +411,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                   ),
 
+                  // Sadece Adminler Tüm Listeyi ve Düzenleme Ekranını Görebilir
                   if (_isAdmin) ...[
                     const SizedBox(height: 40),
                     const Divider(color: Colors.white24),
                     const SizedBox(height: 16),
-                    const Text('Teşkilat Üyeleri',
+                    const Text('Teşkilat Üyeleri ve Yetki Yönetimi',
                         style: TextStyle(
                             color: Colors.white,
-                            fontSize: 18,
+                            fontSize: 16,
                             fontWeight: FontWeight.bold)),
                     const SizedBox(height: 16),
                     StreamBuilder<List<Map<String, dynamic>>>(
@@ -468,29 +469,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 subtitle: Text(uyeUnvan,
                                     style:
                                         const TextStyle(color: Colors.white70)),
-                                trailing: isSelf
-                                    ? const Text('Sen',
-                                        style: TextStyle(
-                                            color: AppColors.accent,
-                                            fontWeight: FontWeight.bold))
-                                    : Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          IconButton(
-                                            icon: const Icon(Icons.edit,
-                                                color: Colors.blueAccent,
-                                                size: 20),
-                                            onPressed: () =>
-                                                _baskaKullaniciDuzenleModal(p),
-                                          ),
-                                          IconButton(
-                                            icon: const Icon(Icons.delete,
-                                                color: Colors.redAccent,
-                                                size: 20),
-                                            onPressed: () => _kullaniciSil(pId),
-                                          ),
-                                        ],
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(Icons.manage_accounts,
+                                          color: Colors.blueAccent, size: 24),
+                                      onPressed: () =>
+                                          _baskaKullaniciDuzenleModal(p),
+                                    ),
+                                    if (!isSelf)
+                                      IconButton(
+                                        icon: const Icon(Icons.delete,
+                                            color: Colors.redAccent, size: 20),
+                                        onPressed: () => _kullaniciSil(pId),
                                       ),
+                                  ],
+                                ),
                               ),
                             );
                           },
@@ -508,10 +503,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white12),
-      ),
+          color: AppColors.card,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white12)),
       child: Row(
         children: [
           Icon(ikon, color: AppColors.accent),

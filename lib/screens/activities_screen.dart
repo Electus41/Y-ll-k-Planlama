@@ -7,6 +7,7 @@ import 'kanban_screen.dart';
 import 'pdf_screen.dart';
 import 'profile_screen.dart';
 import 'units_screen.dart';
+import 'notes_screen.dart';
 
 class ActivitiesScreen extends StatefulWidget {
   const ActivitiesScreen({super.key});
@@ -17,6 +18,8 @@ class ActivitiesScreen extends StatefulWidget {
 
 class _ActivitiesScreenState extends State<ActivitiesScreen> {
   String secilenFiltre = 'Tümü';
+  String _kullaniciYetki = 'Gönüllü'; // Varsayılan yetki
+  bool _yetkiYukleniyor = true;
 
   final List<String> aylar = [
     'Ocak',
@@ -32,6 +35,36 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
     'Kasım',
     'Aralık'
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _kullaniciYetkisiniGetir();
+  }
+
+  // Kullanıcı yetkisini çekiyoruz ki gönüllülerden modülleri gizleyebilelim
+  Future<void> _kullaniciYetkisiniGetir() async {
+    final user = supabase.auth.currentUser;
+    if (user != null) {
+      try {
+        final res = await supabase
+            .from('profiller')
+            .select('yetki_seviyesi')
+            .eq('id', user.id)
+            .maybeSingle();
+        if (res != null && mounted) {
+          setState(() {
+            _kullaniciYetki = res['yetki_seviyesi'] ?? 'Gönüllü';
+            _yetkiYukleniyor = false;
+          });
+        }
+      } catch (e) {
+        if (mounted) setState(() => _yetkiYukleniyor = false);
+      }
+    } else {
+      if (mounted) setState(() => _yetkiYukleniyor = false);
+    }
+  }
 
   InputDecoration _koyuInputDekorasyonu(
       {required String label, required IconData icon}) {
@@ -108,6 +141,7 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
   Future<void> _faaliyetEkleModalAc(
       {Map<String, dynamic>? mevcutFaaliyet}) async {
     List<Map<String, dynamic>> yoneticiler = [];
+    List<Map<String, dynamic>> tumBirimler = [];
     Map<String, dynamic>? aktifKullanici;
 
     try {
@@ -123,13 +157,22 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
             (y) => y['id'].toString() == currentUser.id,
             orElse: () => {'ad': 'Yönetici', 'soyad': '', 'unvan': ''});
       }
+
+      final birimData = await supabase
+          .from('birimler')
+          .select('id, ad, kategori')
+          .order('sira');
+      tumBirimler = List<Map<String, dynamic>>.from(birimData);
     } catch (e) {}
 
     if (!mounted) return;
 
+    bool isAdmin = (aktifKullanici?['unvan'] == 'İl Başkanı' ||
+        aktifKullanici?['unvan'] == 'Teşkilatlanma Başkanı');
+    String? kullaniciUnvani = aktifKullanici?['unvan'];
+
     final baslikController =
         TextEditingController(text: mevcutFaaliyet?['baslik'] ?? '');
-
     bool aralikliTarih = mevcutFaaliyet != null &&
         mevcutFaaliyet['tarih'].toString().contains('-');
 
@@ -137,10 +180,7 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
     String seciliGun = sTarih.day.toString();
     String seciliAy = aylar[sTarih.month - 1];
     String seciliYil = sTarih.year.toString();
-
-    String bitisGun = seciliGun;
-    String bitisAy = seciliAy;
-    String bitisYil = seciliYil;
+    String bitisGun = seciliGun, bitisAy = seciliAy, bitisYil = seciliYil;
 
     if (mevcutFaaliyet != null && mevcutFaaliyet['tarih'] != null) {
       String tamTarih = mevcutFaaliyet['tarih'].toString();
@@ -177,12 +217,19 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
 
     String durum = mevcutFaaliyet?['durum'] ?? 'Yapılacak';
     String oncelik = mevcutFaaliyet?['oncelik'] ?? 'Normal';
-    String? seciliKisiId = mevcutFaaliyet?['atanan_kisi_id']?.toString();
 
-    if (yoneticiler.isNotEmpty) {
-      final idListesi = yoneticiler.map((y) => y['id'].toString()).toList();
-      if (seciliKisiId == null || !idListesi.contains(seciliKisiId)) {
-        seciliKisiId = idListesi.first;
+    String? seciliKisiId = mevcutFaaliyet?['atanan_kisi_id']?.toString();
+    String? seciliHedefId = mevcutFaaliyet?['hedef_birim_id'];
+    String? seciliHedefAd = mevcutFaaliyet?['hedef_birim'];
+    String? seciliSorumluId = mevcutFaaliyet?['sorumlu_birim_id'];
+    String? seciliSorumluAd = mevcutFaaliyet?['olusturan_unvan'];
+
+    if (!isAdmin && seciliSorumluId == null && kullaniciUnvani != null) {
+      final b =
+          tumBirimler.where((x) => x['ad'] == kullaniciUnvani).firstOrNull;
+      if (b != null) {
+        seciliSorumluId = b['id'];
+        seciliSorumluAd = b['ad'];
       }
     }
 
@@ -208,14 +255,14 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                         size: 28),
                     const SizedBox(width: 12),
                     Expanded(
-                      child: Text(
-                        isUpdate ? 'Faaliyeti Düzenle' : 'Yeni Faaliyet Ekle',
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold),
-                      ),
-                    ),
+                        child: Text(
+                            isUpdate
+                                ? 'Faaliyeti Düzenle'
+                                : 'Yeni Faaliyet Ekle',
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold))),
                     IconButton(
                         icon: const Icon(Icons.close, color: Colors.white54),
                         onPressed: () => Navigator.pop(context)),
@@ -223,32 +270,114 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                 ),
                 const SizedBox(height: 24),
                 TextField(
-                  controller: baslikController,
+                    controller: baslikController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: _koyuInputDekorasyonu(
+                        label: 'Faaliyet Adı', icon: Icons.description)),
+                const SizedBox(height: 16),
+                if (isAdmin)
+                  DropdownButtonFormField<String>(
+                    value: seciliSorumluId,
+                    items: tumBirimler
+                        .map((b) => DropdownMenuItem<String>(
+                            value: b['id'],
+                            child:
+                                Text(b['ad'], overflow: TextOverflow.ellipsis)))
+                        .toList(),
+                    onChanged: (val) {
+                      setModalState(() {
+                        seciliSorumluId = val;
+                        seciliSorumluAd =
+                            tumBirimler.firstWhere((b) => b['id'] == val)['ad'];
+                      });
+                    },
+                    dropdownColor: AppColors.inputFill,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: _koyuInputDekorasyonu(
+                        label: 'Sorumlu Birim (Görevlendirilen)',
+                        icon: Icons.account_balance),
+                  )
+                else
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                        color: AppColors.inputFill,
+                        borderRadius: BorderRadius.circular(10)),
+                    child: Row(
+                      children: [
+                        Icon(Icons.lock,
+                            color: Colors.tealAccent.withValues(alpha: 0.7),
+                            size: 20),
+                        const SizedBox(width: 16),
+                        Text(
+                            'Sorumlu Birim: ${seciliSorumluAd ?? 'Belirtilmedi'}',
+                            style: const TextStyle(
+                                color: Colors.white70, fontSize: 14)),
+                      ],
+                    ),
+                  ),
+                const SizedBox(height: 16),
+                if (yoneticiler.isNotEmpty)
+                  DropdownButtonFormField<String>(
+                    value: seciliKisiId,
+                    isExpanded: true,
+                    items: [
+                      const DropdownMenuItem<String>(
+                          value: null,
+                          child: Text('Kişi Seçilmedi (Tüm Birim Sorumlu)')),
+                      ...yoneticiler.map((y) {
+                        final adSoyad =
+                            '${y['ad'] ?? ''}${y['soyad'] ?? ''}'.trim();
+                        final unvan = (y['unvan'] ?? '').toString().trim();
+                        final etiket =
+                            unvan.isNotEmpty ? '$adSoyad ($unvan)' : adSoyad;
+                        return DropdownMenuItem<String>(
+                            value: y['id'].toString(),
+                            child: Text(etiket.isEmpty ? 'Yönetici' : etiket,
+                                overflow: TextOverflow.ellipsis));
+                      }),
+                    ],
+                    onChanged: (val) => setModalState(() => seciliKisiId = val),
+                    dropdownColor: AppColors.inputFill,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: _koyuInputDekorasyonu(
+                        label: 'Özel Sorumlu Kişi (Opsiyonel)',
+                        icon: Icons.person_pin_circle),
+                  ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<String>(
+                  value: seciliHedefId,
+                  items: tumBirimler
+                      .where((b) => b['kategori'] == 'Hedef Kitle Komisyonu')
+                      .map((b) => DropdownMenuItem<String>(
+                          value: b['id'],
+                          child:
+                              Text(b['ad'], overflow: TextOverflow.ellipsis)))
+                      .toList(),
+                  onChanged: (val) {
+                    setModalState(() {
+                      seciliHedefId = val;
+                      seciliHedefAd =
+                          tumBirimler.firstWhere((b) => b['id'] == val)['ad'];
+                    });
+                  },
+                  dropdownColor: AppColors.inputFill,
                   style: const TextStyle(color: Colors.white),
                   decoration: _koyuInputDekorasyonu(
-                      label: 'Faaliyet Adı', icon: Icons.description),
+                      label: 'Faaliyet Alanı / Hedef Komisyon',
+                      icon: Icons.groups),
                 ),
                 const SizedBox(height: 16),
                 SwitchListTile(
                   title: const Text('Tarih Aralığı Seç',
                       style: TextStyle(color: Colors.white, fontSize: 14)),
-                  subtitle: const Text(
-                      'Birden fazla gün sürecek faaliyetler için açın',
-                      style: TextStyle(color: Colors.white54, fontSize: 12)),
                   value: aralikliTarih,
                   activeColor: AppColors.accent,
                   contentPadding: EdgeInsets.zero,
-                  onChanged: (val) {
-                    setModalState(() {
-                      aralikliTarih = val;
-                    });
-                  },
+                  onChanged: (val) => setModalState(() => aralikliTarih = val),
                 ),
                 const SizedBox(height: 8),
-                Text(
-                    aralikliTarih
-                        ? 'Başlangıç Tarihi:'
-                        : 'Faaliyet / İşlem Tarihi:',
+                Text(aralikliTarih ? 'Başlangıç Tarihi:' : 'Faaliyet Tarihi:',
                     style: const TextStyle(
                         color: Colors.white70,
                         fontSize: 12,
@@ -319,30 +448,6 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                   ),
                 ],
                 const SizedBox(height: 16),
-                if (yoneticiler.isNotEmpty)
-                  DropdownButtonFormField<String>(
-                    value: seciliKisiId,
-                    isExpanded: true,
-                    items: yoneticiler.map((y) {
-                      final adSoyad =
-                          '${y['ad'] ?? ''} ${y['soyad'] ?? ''}'.trim();
-                      final unvan = (y['unvan'] ?? '').toString().trim();
-                      final etiket =
-                          unvan.isNotEmpty ? '$adSoyad ($unvan)' : adSoyad;
-                      return DropdownMenuItem<String>(
-                        value: y['id'].toString(),
-                        child: Text(etiket.isEmpty ? 'Yönetici' : etiket,
-                            overflow: TextOverflow.ellipsis),
-                      );
-                    }).toList(),
-                    onChanged: (val) => setModalState(() => seciliKisiId = val),
-                    dropdownColor: AppColors.inputFill,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: _koyuInputDekorasyonu(
-                        label: 'Görev Atanan Yönetici (Bildirim Gider)',
-                        icon: Icons.person_pin_circle),
-                  ),
-                const SizedBox(height: 16),
                 Row(
                   children: [
                     Expanded(
@@ -387,34 +492,35 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                   ),
                   onPressed: () async {
                     if (baslikController.text.trim().isEmpty) return;
-
-                    String tarihStr = '$seciliGun $seciliAy $seciliYil';
-                    if (aralikliTarih) {
-                      tarihStr += ' - $bitisGun $bitisAy $bitisYil';
+                    if (seciliHedefId == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                          content: Text(
+                              'Lütfen Hedef Komisyon (Faaliyet Alanı) seçiniz!'),
+                          backgroundColor: Colors.orange));
+                      return;
                     }
 
-                    String sorumluEtiketi = 'Bilinmiyor';
-                    if (seciliKisiId != null && yoneticiler.isNotEmpty) {
+                    String tarihStr = '$seciliGun $seciliAy$seciliYil';
+                    if (aralikliTarih) {
+                      tarihStr += ' - $bitisGun $bitisAy$bitisYil';
+                    }
+
+                    final atayanAdSoyad =
+                        '${aktifKullanici?['ad'] ?? ''}${aktifKullanici?['soyad'] ?? ''}'
+                            .trim();
+                    final atayanUnvan = aktifKullanici?['unvan'] ?? '';
+                    final atayanTamAd = atayanUnvan.isNotEmpty
+                        ? '$atayanAdSoyad ($atayanUnvan)'
+                        : atayanAdSoyad;
+
+                    String sorumluKisiAd = '';
+                    if (seciliKisiId != null) {
                       final secilen = yoneticiler.firstWhere(
                           (y) => y['id'].toString() == seciliKisiId,
                           orElse: () => yoneticiler.first);
-                      final adSoyad =
-                          '${secilen['ad'] ?? ''} ${secilen['soyad'] ?? ''}'
+                      sorumluKisiAd =
+                          '${secilen['ad'] ?? ''}${secilen['soyad'] ?? ''}'
                               .trim();
-                      final unvan = (secilen['unvan'] ?? '').toString().trim();
-                      sorumluEtiketi =
-                          unvan.isNotEmpty ? '$adSoyad ($unvan)' : adSoyad;
-                    }
-
-                    String atayanEtiketi = 'Sistem';
-                    if (aktifKullanici != null) {
-                      final adSoyad =
-                          '${aktifKullanici['ad'] ?? ''} ${aktifKullanici['soyad'] ?? ''}'
-                              .trim();
-                      final unvan =
-                          (aktifKullanici['unvan'] ?? '').toString().trim();
-                      atayanEtiketi =
-                          unvan.isNotEmpty ? '$adSoyad ($unvan)' : adSoyad;
                     }
 
                     final Map<String, dynamic> kayitVerisi = {
@@ -422,9 +528,13 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                       'tarih': tarihStr,
                       'durum': durum,
                       'oncelik': oncelik,
-                      'hedef_birim': sorumluEtiketi,
-                      'olusturan_unvan': atayanEtiketi,
                       'atanan_kisi_id': seciliKisiId,
+                      'sorumlu_kisi_ad': sorumluKisiAd,
+                      'atayan_ad': atayanTamAd,
+                      'hedef_birim_id': seciliHedefId,
+                      'hedef_birim': seciliHedefAd,
+                      'sorumlu_birim_id': seciliSorumluId,
+                      'olusturan_unvan': seciliSorumluAd,
                     };
 
                     if (isUpdate) {
@@ -467,7 +577,7 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
     String metin = "📌 *KOCAELİ GENÇ İHH YILLIK PLAN*\n\n";
     for (var f in faaliyetler) {
       metin +=
-          "🔹 *${f['baslik']}*\n📅 ${f['tarih']}\n📌 Durum: ${f['durum']}\n🎯 Sorumlu: ${f['hedef_birim']}\n👤 Atayan: ${f['olusturan_unvan']}\n\n";
+          "🔹 *${f['baslik']}*\n📅 ${f['tarih']}\n📌 Durum: ${f['durum']}\n🏢 Sorumlu Birim: ${f['olusturan_unvan']}\n🎯 Hedef: ${f['hedef_birim']}\n✍️ Atayan: ${f['atayan_ad']}\n\n";
     }
     Clipboard.setData(ClipboardData(text: metin));
     ScaffoldMessenger.of(context).showSnackBar(
@@ -476,6 +586,13 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_yetkiYukleniyor) {
+      return const Scaffold(
+          backgroundColor: AppColors.secondary,
+          body: Center(
+              child: CircularProgressIndicator(color: AppColors.accent)));
+    }
+
     return Scaffold(
       backgroundColor: AppColors.secondary,
       appBar: AppBar(
@@ -489,7 +606,7 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                 boxShadow: [
                   BoxShadow(
                       color: AppColors.accent.withValues(alpha: 0.3),
-                      blurRadius: 8),
+                      blurRadius: 8)
                 ],
               ),
               child: Image.asset('assets/images/logo.png', height: 28),
@@ -597,6 +714,7 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                         fontWeight: FontWeight.bold,
                         color: Colors.white)),
                 const SizedBox(height: 12),
+
                 _modulSatiri(
                     context,
                     'Yeni Faaliyet Ekle',
@@ -630,8 +748,8 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                 const SizedBox(height: 10),
                 _modulSatiri(
                     context,
-                    'Teşkilat Birimleri',
-                    'Birimleri ekleyin, düzenleyin veya silin',
+                    'Birimlere Göre Faaliyetler',
+                    'Faaliyetleri birimlere göre raporlayın ve yönetin',
                     Icons.group,
                     Colors.lightBlueAccent,
                     () => Navigator.push(
@@ -639,6 +757,22 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                         MaterialPageRoute(
                             builder: (context) => const UnitsScreen()))),
                 const SizedBox(height: 10),
+
+                // GÖNÜLLÜLERDEN GİZLENEN MODÜL KONTROLÜ
+                if (_kullaniciYetki != 'Gönüllü') ...[
+                  _modulSatiri(
+                      context,
+                      'Toplantı Notları & Kararlar',
+                      'Haftalık kararları tutun ve PDF çıktısı alın',
+                      Icons.edit_document,
+                      Colors.deepPurpleAccent,
+                      () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (context) => const NotesScreen()))),
+                  const SizedBox(height: 10),
+                ],
+
                 _modulSatiri(
                     context,
                     'PDF Raporlar & Analiz',
@@ -649,6 +783,7 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                         context,
                         MaterialPageRoute(
                             builder: (context) => const PdfScreen()))),
+
                 const SizedBox(height: 24),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -776,14 +911,27 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                                 Text('📅 Tarih: ${f['tarih'] ?? '-'}',
                                     style:
                                         const TextStyle(color: Colors.white70)),
+                                const SizedBox(height: 4),
                                 Text(
-                                    '📌 Öncelik: ${f['oncelik'] ?? 'Normal'} | 🎯 Sorumlu: ${f['hedef_birim'] ?? '-'}',
+                                    '🏢 Sorumlu Birim: ${f['olusturan_unvan'] ?? 'Belirtilmedi'}',
                                     style:
                                         const TextStyle(color: Colors.white70)),
+                                if (f['sorumlu_kisi_ad'] != null &&
+                                    f['sorumlu_kisi_ad'].toString().isNotEmpty)
+                                  Text(
+                                      '👤 Sorumlu Kişi: ${f['sorumlu_kisi_ad']}',
+                                      style: const TextStyle(
+                                          color: Colors.white70)),
                                 Text(
-                                    '👤 Atayan: ${f['olusturan_unvan'] ?? '-'}',
+                                    '🎯 Hedef Komisyon: ${f['hedef_birim'] ?? 'Genel'}',
+                                    style:
+                                        const TextStyle(color: Colors.white70)),
+                                const SizedBox(height: 4),
+                                Text('✍️ Atayan: ${f['atayan_ad'] ?? '-'}',
                                     style: const TextStyle(
-                                        color: AppColors.accent, fontSize: 13)),
+                                        color: AppColors.accent,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.bold)),
                               ],
                             ),
                           ),
