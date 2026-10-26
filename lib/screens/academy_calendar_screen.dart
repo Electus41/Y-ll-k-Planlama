@@ -603,7 +603,6 @@ class _AcademyCalendarScreenState extends State<AcademyCalendarScreen> {
                 ),
                 const SizedBox(height: 8),
 
-                // YENİ: 2. Komisyon Filtresi
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.symmetric(horizontal: 16),
