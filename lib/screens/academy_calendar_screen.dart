@@ -42,10 +42,24 @@ class _AcademyCalendarScreenState extends State<AcademyCalendarScreen> {
           .eq('kategori', komisyonKategorisi)
           .order('sira');
 
-      k = d
-          .map<String>((b) => b['ad'].toString())
-          .where((ad) => !ad.contains('Başkan'))
-          .toList();
+      final Set<String> zirhliListe = {};
+      for (final b in d) {
+        String ad = b['ad'].toString().trim();
+        final lowerAd = ad.toLowerCase();
+
+        // İlkokul komisyonunu gizle
+        if (lowerAd.contains('ilkokul')) continue;
+
+        // " Başkanı" ekini sil
+        if (ad.endsWith(' Başkanı')) {
+          ad = ad.replaceAll(' Başkanı', '').trim();
+        }
+
+        if (ad.isNotEmpty) {
+          zirhliListe.add(ad);
+        }
+      }
+      k = zirhliListe.toList()..sort();
     } catch (e) {
       debugPrint('Komisyonlar alınamadı: $e');
     }
@@ -60,7 +74,17 @@ class _AcademyCalendarScreenState extends State<AcademyCalendarScreen> {
     // ONAY BEKLEYENLERİ TAKVİMDEN GİZLİYORUZ
     if (f['onay_durumu'] == 'Bekliyor') return false;
 
-    if (_komisyon != 'Tümü' && f['hedef_birim'] != _komisyon) return false;
+    // Faaliyetin hedef birimini al ve temizle
+    String fBirim = f['hedef_birim']?.toString().trim() ?? '';
+    if (fBirim.endsWith(' Başkanı')) {
+      fBirim = fBirim.replaceAll(' Başkanı', '').trim();
+    }
+
+    // Eski kayıtlarda kalan ilkokul faaliyetlerini de gizle
+    if (fBirim.toLowerCase().contains('ilkokul')) return false;
+
+    if (_komisyon != 'Tümü' && fBirim != _komisyon) return false;
+
     final r = tarihCoz(f['tarih']?.toString());
     if (r == null) {
       final t = (f['tarih'] ?? '').toString();
@@ -77,37 +101,6 @@ class _AcademyCalendarScreenState extends State<AcademyCalendarScreen> {
     final r = tarihCoz(f['tarih']?.toString());
     if (r == null) return '-';
     return r.start == r.end ? '${r.start.day}' : '${r.start.day}-${r.end.day}';
-  }
-
-  Widget _chipSatiri(List<String> secenekler, bool Function(String) secili,
-      void Function(String) sec, Color secilenRenk, bool koyuYazi) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Row(
-        children: secenekler.map((e) {
-          final s = secili(e);
-          return Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: ChoiceChip(
-              label: Text(e),
-              selected: s,
-              onSelected: (_) => setState(() => sec(e)),
-              backgroundColor: Colors.transparent,
-              selectedColor: secilenRenk,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  side: const BorderSide(color: Colors.white24)),
-              labelStyle: TextStyle(
-                  color: s
-                      ? (koyuYazi ? Colors.black : AppColors.accent)
-                      : Colors.white70,
-                  fontWeight: s ? FontWeight.bold : FontWeight.normal),
-            ),
-          );
-        }).toList(),
-      ),
-    );
   }
 
   @override
@@ -158,23 +151,45 @@ class _AcademyCalendarScreenState extends State<AcademyCalendarScreen> {
           Container(
             color: AppColors.background,
             width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Column(
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+            child: Row(
               children: [
-                _chipSatiri(
-                  ['Tümü', ...aylar],
-                  (e) => e == 'Tümü' ? _ay == null : _ay == aylar.indexOf(e),
-                  (e) => _ay = e == 'Tümü' ? null : aylar.indexOf(e),
-                  AppColors.accent,
-                  true,
+                Expanded(
+                  child: DropdownButtonFormField<int?>(
+                    value: _ay,
+                    isExpanded: true,
+                    dropdownColor: AppColors.inputFill,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: koyuInput(
+                        label: 'Ay Seçin', icon: Icons.calendar_month),
+                    items: [
+                      const DropdownMenuItem<int?>(
+                          value: null, child: Text('Tümü')),
+                      ...List.generate(aylar.length, (i) {
+                        return DropdownMenuItem<int?>(
+                            value: i, child: Text(aylar[i]));
+                      }),
+                    ],
+                    onChanged: (v) => setState(() => _ay = v),
+                  ),
                 ),
-                const SizedBox(height: 8),
-                _chipSatiri(
-                  _komisyonlar,
-                  (e) => _komisyon == e,
-                  (e) => _komisyon = e,
-                  AppColors.card,
-                  false,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    value:
+                        _komisyonlar.contains(_komisyon) ? _komisyon : 'Tümü',
+                    isExpanded: true,
+                    dropdownColor: AppColors.inputFill,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: koyuInput(
+                        label: 'Birim / Komisyon', icon: Icons.groups),
+                    items: _komisyonlar.map((b) {
+                      return DropdownMenuItem<String>(
+                          value: b,
+                          child: Text(b, overflow: TextOverflow.ellipsis));
+                    }).toList(),
+                    onChanged: (v) => setState(() => _komisyon = v ?? 'Tümü'),
+                  ),
                 ),
               ],
             ),
