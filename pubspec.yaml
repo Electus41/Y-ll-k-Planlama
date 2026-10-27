@@ -14,7 +14,7 @@ dependencies:
   printing: ^5.15.1
   url_launcher: ^6.2.5
   table_calendar: ^3.1.2
-  intl: 0.20.2
+  intl: any
   onesignal_flutter: ^5.7.1
   http: ^1.6.0
   shared_preferences: ^2.5.6
