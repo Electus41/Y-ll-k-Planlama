@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/constants.dart';
 import '../core/notification_service.dart';
+import '../core/ortak.dart';
 import 'activities_screen.dart';
 import 'register_screen.dart';
 
@@ -24,6 +26,13 @@ class _LoginScreenState extends State<LoginScreen> {
     _kayitliBilgileriYukle();
   }
 
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _sifreController.dispose();
+    super.dispose();
+  }
+
   Future<void> _kayitliBilgileriYukle() async {
     final prefs = await SharedPreferences.getInstance();
     final kayitliEmail = prefs.getString('kayitli_email') ?? '';
@@ -38,50 +47,63 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  InputDecoration _koyuInputDekorasyonu(
-      {required String label, required IconData icon}) {
-    return InputDecoration(
-      labelText: label,
-      labelStyle: const TextStyle(color: Colors.white70),
-      prefixIcon:
-          Icon(icon, color: Colors.tealAccent.withValues(alpha: 0.7), size: 20),
-      filled: true,
-      fillColor: AppColors.inputFill,
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Colors.white30),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: AppColors.accent, width: 2),
-      ),
-    );
+  InputDecoration _dekor(String label, IconData icon) => InputDecoration(
+        labelText: label,
+        labelStyle: const TextStyle(color: Colors.white70),
+        prefixIcon: Icon(icon,
+            color: Colors.tealAccent.withValues(alpha: 0.7), size: 20),
+        filled: true,
+        fillColor: AppColors.inputFill,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Colors.white30),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.accent, width: 2),
+        ),
+      );
+
+  String _hataMesaji(Object e) {
+    final s = (e is AuthException ? e.message : e.toString()).toLowerCase();
+    if (s.contains('invalid login credentials') ||
+        s.contains('invalid_credentials')) {
+      return 'E-posta adresi veya şifre hatalı.';
+    }
+    if (s.contains('email not confirmed')) {
+      return 'E-posta adresiniz henüz onaylanmamış.';
+    }
+    if (s.contains('rate limit') || s.contains('429')) {
+      return 'Çok fazla deneme yapıldı. Lütfen biraz bekleyin.';
+    }
+    if (s.contains('socketexception') ||
+        s.contains('failed host lookup') ||
+        s.contains('network')) {
+      return 'İnternet bağlantısı kurulamadı.';
+    }
+    return 'Giriş yapılamadı. Lütfen tekrar deneyin.';
   }
 
   Future<void> _girisYap() async {
-    if (_emailController.text.trim().isEmpty ||
-        _sifreController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('Lütfen e-posta ve şifrenizi girin.'),
-            backgroundColor: Colors.orange),
-      );
+    final email = _emailController.text.trim();
+    final sifre = _sifreController.text.trim();
+    if (email.isEmpty || sifre.isEmpty) {
+      bildir(context, 'Lütfen e-posta ve şifrenizi girin.',
+          renk: Colors.orange);
       return;
     }
 
     setState(() => _isLoading = true);
     try {
-      final authResponse = await supabase.auth.signInWithPassword(
-        email: _emailController.text.trim(),
-        password: _sifreController.text.trim(),
-      );
+      final authResponse =
+          await supabase.auth.signInWithPassword(email: email, password: sifre);
 
       if (authResponse.user != null) {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool('beni_hatirla', _beniHatirla);
         if (_beniHatirla) {
-          await prefs.setString('kayitli_email', _emailController.text.trim());
+          await prefs.setString('kayitli_email', email);
         } else {
           await prefs.remove('kayitli_email');
         }
@@ -91,89 +113,64 @@ class _LoginScreenState extends State<LoginScreen> {
         if (!mounted) return;
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (context) => const ActivitiesScreen()),
+          MaterialPageRoute(builder: (_) => const ActivitiesScreen()),
         );
       }
     } catch (e) {
-      String kullaniciMesaji = 'E-posta adresi veya şifre hatalı.';
-      final hataStr = e.toString().toLowerCase();
-
-      if (hataStr.contains('over_email_send_rate_limit') ||
-          hataStr.contains('429')) {
-        kullaniciMesaji = 'Çok fazla deneme yapıldı. Lütfen biraz bekleyin.';
-      } else if (hataStr.contains('email not confirmed')) {
-        kullaniciMesaji = 'E-posta adresiniz henüz onaylanmamış.';
-      }
-
+      debugPrint('Giriş hatası: $e');
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text(kullaniciMesaji),
-            backgroundColor: Colors.red.shade700),
-      );
+      bildir(context, _hataMesaji(e), renk: Colors.red.shade700);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
   void _sifremiUnuttumModalAc() {
-    final resetEmailController =
-        TextEditingController(text: _emailController.text.trim());
+    final resetCtrl = TextEditingController(text: _emailController.text.trim());
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF161C1A),
+      builder: (ctx) => AlertDialog(
+        backgroundColor: kutuRengi,
         title: const Text('Şifremi Unuttum',
             style: TextStyle(color: Colors.white)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             const Text(
-              'Şifre sıfırlama talimatlarını almak için e-posta adresinizi girin.',
-              style: TextStyle(color: Colors.white70),
-            ),
+                'Şifre sıfırlama talimatlarını almak için e-posta adresinizi girin.',
+                style: TextStyle(color: Colors.white70)),
             const SizedBox(height: 12),
             TextField(
-              controller: resetEmailController,
+              controller: resetCtrl,
               style: const TextStyle(color: Colors.white),
-              decoration: _koyuInputDekorasyonu(
-                  label: 'E-posta Adresi', icon: Icons.email_outlined),
+              decoration: _dekor('E-posta Adresi', Icons.email_outlined),
             ),
           ],
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('İptal', style: TextStyle(color: Colors.white54)),
-          ),
+              onPressed: () => Navigator.pop(ctx),
+              child:
+                  const Text('İptal', style: TextStyle(color: Colors.white54))),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.accent,
-              foregroundColor: Colors.black,
-            ),
+                backgroundColor: AppColors.accent,
+                foregroundColor: Colors.black),
             onPressed: () async {
-              if (resetEmailController.text.trim().isEmpty) return;
+              if (resetCtrl.text.trim().isEmpty) return;
               try {
                 await supabase.auth
-                    .resetPasswordForEmail(resetEmailController.text.trim());
-                if (!context.mounted) return;
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                        'Şifre sıfırlama bağlantısı e-posta adresinize gönderildi.'),
-                    backgroundColor: Colors.green,
-                  ),
-                );
+                    .resetPasswordForEmail(resetCtrl.text.trim());
+                if (!ctx.mounted) return;
+                Navigator.pop(ctx);
+                bildir(context,
+                    'Şifre sıfırlama bağlantısı e-posta adresinize gönderildi.');
               } catch (err) {
-                if (!context.mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                        'Sıfırlama bağlantısı gönderilemedi. E-postayı kontrol edin.'),
-                    backgroundColor: Colors.red,
-                  ),
-                );
+                debugPrint('Şifre sıfırlama hatası: $err');
+                if (!ctx.mounted) return;
+                bildir(context,
+                    'Sıfırlama bağlantısı gönderilemedi. E-postayı kontrol edin.',
+                    renk: Colors.red);
               }
             },
             child: const Text('Gönder',
@@ -195,7 +192,7 @@ class _LoginScreenState extends State<LoginScreen> {
         elevation: 0,
       ),
       body: Padding(
-        padding: const EdgeInsets.all(20.0),
+        padding: const EdgeInsets.all(20),
         child: Center(
           child: SingleChildScrollView(
             child: ConstrainedBox(
@@ -225,8 +222,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     keyboardType: TextInputType.emailAddress,
                     style: const TextStyle(color: Colors.white),
                     textInputAction: TextInputAction.next,
-                    decoration: _koyuInputDekorasyonu(
-                        label: 'E-posta Adresi', icon: Icons.email_outlined),
+                    decoration: _dekor('E-posta Adresi', Icons.email_outlined),
                   ),
                   const SizedBox(height: 16),
                   TextField(
@@ -235,8 +231,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     textInputAction: TextInputAction.done,
                     onSubmitted: (_) => _girisYap(),
                     obscureText: true,
-                    decoration: _koyuInputDekorasyonu(
-                        label: 'Şifre', icon: Icons.lock_outline),
+                    decoration: _dekor('Şifre', Icons.lock_outline),
                   ),
                   const SizedBox(height: 12),
                   Row(
@@ -249,8 +244,8 @@ class _LoginScreenState extends State<LoginScreen> {
                             activeColor: AppColors.accent,
                             checkColor: Colors.black,
                             side: const BorderSide(color: Colors.white54),
-                            onChanged: (val) =>
-                                setState(() => _beniHatirla = val ?? false),
+                            onChanged: (v) =>
+                                setState(() => _beniHatirla = v ?? false),
                           ),
                           const Text('Beni hatırla',
                               style: TextStyle(color: Colors.white70)),
@@ -284,13 +279,10 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                   const SizedBox(height: 16),
                   TextButton(
-                    onPressed: () {
-                      Navigator.push(
+                    onPressed: () => Navigator.push(
                         context,
                         MaterialPageRoute(
-                            builder: (context) => const RegisterScreen()),
-                      );
-                    },
+                            builder: (_) => const RegisterScreen())),
                     child: const Text('Hesabınız yok mu? Kayıt Olun',
                         style: TextStyle(color: Colors.tealAccent)),
                   ),

@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/constants.dart';
-import '../core/notification_service.dart';
+import '../core/faaliyet_servisi.dart';
+import '../core/ortak.dart';
+import 'faaliyet_detay_screen.dart';
 
 class KanbanScreen extends StatefulWidget {
   const KanbanScreen({super.key});
@@ -11,192 +12,113 @@ class KanbanScreen extends StatefulWidget {
 }
 
 class _KanbanScreenState extends State<KanbanScreen> {
-  String _kullaniciRol = 'Gönüllü';
-  String _kullaniciBirim = '';
-  bool _isAdmin = false;
-  bool _yetkilerYuklendi = false;
-
-  // Komisyon Filtresi
-  String _seciliKomisyon = 'Tümü';
-  final List<String> _komisyonFiltreleri = [
-    'Tümü',
-    'İlkokul Komisyonu',
-    'Ortaokul Komisyonu',
-    'Lise Komisyonu',
-    'Üniversite Komisyonu',
-    'Genel'
-  ];
+  Yetki? _yetki;
+  bool _yuklendi = false;
+  String _komisyon = 'Tümü';
+  List<String> _komisyonlar = ['Tümü'];
+  late final Stream<List<Map<String, dynamic>>> _stream;
 
   @override
   void initState() {
     super.initState();
-    _kullaniciYetkileriniGetir();
+    _stream = supabase
+        .from('faaliyetler')
+        .stream(primaryKey: ['id']).order('created_at', ascending: false);
+    _yukle();
   }
 
-  Future<void> _kullaniciYetkileriniGetir() async {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user != null) {
-      final data = await Supabase.instance.client
-          .from('profiller')
-          .select('yetki_seviyesi, bagli_birim, unvan')
-          .eq('id', user.id)
-          .maybeSingle();
+  Future<void> _yukle() async {
+    final y = await Yetki.yukle();
+    List<String> k = [];
+    try {
+      final d = await supabase
+          .from('birimler')
+          .select('ad')
+          .eq('kategori', komisyonKategorisi)
+          .order('sira');
 
-      if (data != null && mounted) {
-        setState(() {
-          _kullaniciRol = data['yetki_seviyesi'] ?? 'Gönüllü';
-          _kullaniciBirim = data['bagli_birim'] ?? '';
-          final unvan = data['unvan'] ?? '';
-          _isAdmin = (unvan == 'İl Başkanı' ||
-              unvan == 'Teşkilatlanma Başkanı' ||
-              unvan == 'Gölge Başkan');
-          _yetkilerYuklendi = true;
-        });
-      }
+      // BAŞKANLARI BURADAN YATAY FİLTRE İÇİN GİZLİYORUZ
+      k = d
+          .map<String>((b) => b['ad'].toString())
+          .where((ad) => !ad.contains('Başkan'))
+          .toList();
+    } catch (e) {
+      debugPrint('Komisyonlar alınamadı: $e');
     }
+    if (!mounted) return;
+    setState(() {
+      _yetki = y;
+      _komisyonlar = ['Tümü', ...k];
+      _yuklendi = true;
+    });
   }
 
-  InputDecoration _koyuInputDekorasyonu(
-      {required String label, required IconData icon}) {
-    return InputDecoration(
-      labelText: label,
-      labelStyle: const TextStyle(color: Colors.white54, fontSize: 14),
-      prefixIcon:
-          Icon(icon, color: Colors.tealAccent.withValues(alpha: 0.7), size: 20),
-      filled: true,
-      fillColor: AppColors.inputFill,
-      border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-      contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
-    );
-  }
-
-  Future<void> _durumGuncelle(
-      String id, String yeniDurum, String olusturanBirim) async {
-    if (!_isAdmin && olusturanBirim != _kullaniciBirim) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content:
-            Text('Sadece kendi biriminize ait görevleri taşıyabilirsiniz!'),
-        backgroundColor: Colors.orange,
-      ));
+  Future<void> _durumTasi(Map<String, dynamic> f, String yeni) async {
+    if (f['durum'] == yeni) return;
+    if (!(_yetki?.durumDegistirebilir(f) ?? false)) {
+      bildir(context, 'Sadece kendi biriminize ait görevleri taşıyabilirsiniz!',
+          renk: Colors.orange);
       return;
     }
-    await Supabase.instance.client
-        .from('faaliyetler')
-        .update({'durum': yeniDurum}).eq('id', id);
+    await FaaliyetServisi.durumGuncelle(context, f, yeni);
   }
 
-  Future<void> _gorevSil(String id) async {
-    bool confirm = await showDialog(
-          context: context,
-          builder: (context) => AlertDialog(
-            backgroundColor: const Color(0xFF161C1A),
-            title:
-                const Text('Görevi Sil', style: TextStyle(color: Colors.white)),
-            content: const Text('Bu görevi silmek istediğinize emin misiniz?',
-                style: TextStyle(color: Colors.white70)),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('İptal',
-                      style: TextStyle(color: Colors.white54))),
-              ElevatedButton(
-                style:
-                    ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Sil', style: TextStyle(color: Colors.white)),
-              ),
-            ],
-          ),
-        ) ??
-        false;
+  Future<void> _altGorevAc({Map<String, dynamic>? mevcut}) async {
+    final yetki = _yetki;
+    if (yetki == null || yetki.gonullu) return;
 
-    if (confirm) {
-      await Supabase.instance.client.from('faaliyetler').delete().eq('id', id);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content:
-                Text('Görev silindi.', style: TextStyle(color: Colors.white))));
-      }
-    }
-  }
-
-  // HATALI OLAN "ALT GÖREV EKLEME MODALI" TAMAMEN DÜZELTİLDİ
-  Future<void> _kanbandanAltGorevEkleAc(
-      {Map<String, dynamic>? mevcutGorev}) async {
-    if (_kullaniciRol == 'Gönüllü') return;
-
-    List<Map<String, dynamic>> yoneticiler = [];
+    List<Map<String, dynamic>> kisiler = [];
     List<Map<String, dynamic>> anaFaaliyetler = [];
-    Map<String, dynamic>? aktifKullanici;
-
     try {
-      // Yöneticileri Çek - 'eq(aktif, true)' BURADAN KALDIRILDI Kİ HATA VERMESİN
-      final profilData = await Supabase.instance.client
+      kisiler = List<Map<String, dynamic>>.from(await supabase
           .from('profiller')
           .select('id, ad, soyad, unvan')
-          .order('ad');
-      yoneticiler = List<Map<String, dynamic>>.from(profilData);
-
-      final currentUser = Supabase.instance.client.auth.currentUser;
-      if (currentUser != null) {
-        aktifKullanici = yoneticiler.firstWhere(
-            (y) => y['id'].toString() == currentUser.id,
-            orElse: () => {'ad': 'Yönetici', 'soyad': '', 'unvan': ''});
-      }
-
-      // Ana Faaliyetleri Çek (Null filtresini Supabase'de değil Dart tarafında yapıyoruz ki %100 çalışsın)
-      final faaliyetData = await Supabase.instance.client
+          .order('ad'));
+      final d = await supabase
           .from('faaliyetler')
           .select('id, baslik, hedef_birim, hedef_birim_id, bagli_faaliyet_id')
           .order('created_at', ascending: false);
-
-      // Sadece ana faaliyetleri (Alt görev olmayanları) filtrele
-      anaFaaliyetler = List<Map<String, dynamic>>.from(faaliyetData)
+      anaFaaliyetler = List<Map<String, dynamic>>.from(d)
           .where((f) => f['bagli_faaliyet_id'] == null)
           .toList();
     } catch (e) {
-      debugPrint("Veri Çekme Hatası: $e");
+      debugPrint('Alt görev verileri alınamadı: $e');
+      if (mounted) bildir(context, 'Veriler yüklenemedi.', renk: Colors.red);
+      return;
     }
-
     if (!mounted) return;
-
     if (anaFaaliyetler.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Önce takvimden ana bir faaliyet eklemelisiniz!'),
-          backgroundColor: Colors.orange));
+      bildir(context, 'Önce takvimden ana bir faaliyet eklemelisiniz!',
+          renk: Colors.orange);
       return;
     }
 
-    final baslikController =
-        TextEditingController(text: mevcutGorev?['baslik'] ?? '');
-    String? seciliAnaFaaliyetId =
-        mevcutGorev?['bagli_faaliyet_id']?.toString() ??
-            anaFaaliyetler.first['id'].toString();
-    String? seciliKisiId = mevcutGorev?['atanan_kisi_id']?.toString();
-    String durum = mevcutGorev?['durum'] ?? 'Yapılacak';
-    String oncelik = mevcutGorev?['oncelik'] ?? 'Normal';
+    final baslikCtrl =
+        TextEditingController(text: mevcut?['baslik']?.toString() ?? '');
+    String? anaId = mevcut?['bagli_faaliyet_id']?.toString();
+    if (!anaFaaliyetler.any((a) => a['id'].toString() == anaId)) {
+      anaId = anaFaaliyetler.first['id'].toString();
+    }
+    final ak = mevcut?['atanan_kisi_id']?.toString();
+    String? kisiId = kisiler.any((k) => k['id'].toString() == ak) ? ak : null;
+    String durum = durumlar.contains(mevcut?['durum'])
+        ? mevcut!['durum'] as String
+        : 'Yapılacak';
+    String oncelik = oncelikler.contains(mevcut?['oncelik'])
+        ? mevcut!['oncelik'] as String
+        : 'Normal';
+    DateTime teslim =
+        tarihCoz(mevcut?['tarih']?.toString())?.start ?? DateTime.now();
+    bool kaydediliyor = false;
 
-    // Alt görev tarihi tek bir gün (Teslim tarihi)
-    DateTime teslimTarihi = mevcutGorev != null && mevcutGorev['tarih'] != null
-        ? (DateTime.tryParse(mevcutGorev['tarih']
-                .toString()
-                .split(' ')
-                .first
-                .replaceAll('.', '-')) ??
-            DateTime.now())
-        : DateTime.now();
-
-    bool isUpdate = mevcutGorev != null;
-
-    showDialog(
+    await showDialog(
       context: context,
-      builder: (modalContext) => Dialog(
-        backgroundColor: const Color(0xFF161C1A),
+      builder: (dialogCtx) => Dialog(
+        backgroundColor: kutuRengi,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         insetPadding: const EdgeInsets.all(16),
         child: StatefulBuilder(
-          builder: (context, setModalState) => SingleChildScrollView(
+          builder: (context, setM) => SingleChildScrollView(
             padding: const EdgeInsets.all(24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -206,7 +128,7 @@ class _KanbanScreenState extends State<KanbanScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                        isUpdate
+                        mevcut != null
                             ? 'Alt Görevi Düzenle'
                             : 'Yeni Alt Görev Ataması',
                         style: const TextStyle(
@@ -215,73 +137,48 @@ class _KanbanScreenState extends State<KanbanScreen> {
                             fontWeight: FontWeight.bold)),
                     IconButton(
                         icon: const Icon(Icons.close, color: Colors.white54),
-                        onPressed: () => Navigator.pop(context)),
+                        onPressed: () => Navigator.pop(dialogCtx)),
                   ],
                 ),
                 const SizedBox(height: 16),
-
-                // Hangi Ana Faaliyete Bağlı?
                 DropdownButtonFormField<String>(
-                  value: seciliAnaFaaliyetId,
+                  initialValue: anaId,
                   isExpanded: true,
                   items: anaFaaliyetler
                       .map((f) => DropdownMenuItem<String>(
                           value: f['id'].toString(),
-                          child: Text(f['baslik'],
+                          child: Text(f['baslik'].toString(),
                               overflow: TextOverflow.ellipsis)))
                       .toList(),
-                  onChanged: (val) =>
-                      setModalState(() => seciliAnaFaaliyetId = val),
+                  onChanged: (v) => setM(() => anaId = v),
                   dropdownColor: AppColors.inputFill,
                   style: const TextStyle(color: Colors.white),
-                  decoration: _koyuInputDekorasyonu(
-                      label: 'Bağlı Olduğu Ana Faaliyet (Örn: Kış Kampı)',
+                  decoration: koyuInput(
+                      label: 'Bağlı Olduğu Ana Faaliyet',
                       icon: Icons.merge_type),
                 ),
                 const SizedBox(height: 16),
-
                 TextField(
-                    controller: baslikController,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: _koyuInputDekorasyonu(
-                        label: 'Alt Görev Adı (Örn: Otobüs Ayarlanacak)',
-                        icon: Icons.task_alt)),
+                  controller: baslikCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: koyuInput(
+                      label: 'Alt Görev Adı (Örn: Otobüs Ayarlanacak)',
+                      icon: Icons.task_alt),
+                ),
                 const SizedBox(height: 16),
-
-                if (yoneticiler.isNotEmpty)
-                  DropdownButtonFormField<String>(
-                    value: seciliKisiId,
-                    isExpanded: true,
-                    items: [
-                      const DropdownMenuItem<String>(
-                          value: null, child: Text('Henüz Atanmadı')),
-                      ...yoneticiler.map((y) {
-                        final adSoyad =
-                            '${y['ad'] ?? ''} ${y['soyad'] ?? ''}'.trim();
-                        final unvan = (y['unvan'] ?? '').toString().trim();
-                        final etiket =
-                            unvan.isNotEmpty ? '$adSoyad ($unvan)' : adSoyad;
-                        return DropdownMenuItem<String>(
-                            value: y['id'].toString(),
-                            child: Text(etiket.isEmpty ? 'Yönetici' : etiket,
-                                overflow: TextOverflow.ellipsis));
-                      }),
-                    ],
-                    onChanged: (val) => setModalState(() => seciliKisiId = val),
-                    dropdownColor: AppColors.inputFill,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: _koyuInputDekorasyonu(
-                        label: 'Görevi Yapacak Kişi (Bildirim Gider)',
-                        icon: Icons.person_pin_circle),
-                  ),
-
+                kisiDropdown(
+                  kisiler: kisiler,
+                  deger: kisiId,
+                  etiketMetni: 'Görevi Yapacak Kişi (Bildirim Gider)',
+                  bosMetin: 'Henüz Atanmadı',
+                  onChanged: (v) => setM(() => kisiId = v),
+                ),
                 const SizedBox(height: 16),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('Son Teslim / Bitiş Tarihi',
                       style: TextStyle(color: Colors.white54, fontSize: 13)),
-                  subtitle: Text(
-                      '${teslimTarihi.day}.${teslimTarihi.month}.${teslimTarihi.year}',
+                  subtitle: Text(tarihYaz(teslim),
                       style: const TextStyle(
                           color: Colors.white,
                           fontSize: 16,
@@ -289,61 +186,66 @@ class _KanbanScreenState extends State<KanbanScreen> {
                   trailing:
                       const Icon(Icons.calendar_month, color: AppColors.accent),
                   onTap: () async {
+                    final s = DateTime.now();
                     final secilen = await showDatePicker(
                       context: context,
-                      initialDate: teslimTarihi,
-                      firstDate: DateTime(2023),
-                      lastDate: DateTime(2030),
-                      builder: (context, child) => Theme(
+                      initialDate: teslim,
+                      firstDate: DateTime(
+                          teslim.year < s.year - 1 ? teslim.year : s.year - 1),
+                      lastDate: DateTime(
+                          teslim.year > s.year + 5 ? teslim.year : s.year + 5,
+                          12,
+                          31),
+                      builder: (c, child) => Theme(
                         data: ThemeData.dark().copyWith(
                           colorScheme: const ColorScheme.dark(
                               primary: AppColors.accent,
                               onPrimary: Colors.black,
-                              surface: Color(0xFF161C1A)),
+                              surface: kutuRengi),
                         ),
                         child: child!,
                       ),
                     );
-                    if (secilen != null)
-                      setModalState(() => teslimTarihi = secilen);
+                    if (secilen != null) setM(() => teslim = secilen);
                   },
                 ),
-
-                const SizedBox(height: 16),
+                const SizedBox(height: 8),
                 Row(
                   children: [
                     Expanded(
                       child: DropdownButtonFormField<String>(
-                        value: durum,
-                        items: ['Yapılacak', 'Yapılıyor', 'Tamamlandı']
+                        initialValue: durum,
+                        isExpanded: true,
+                        items: durumlar
                             .map((e) =>
                                 DropdownMenuItem(value: e, child: Text(e)))
                             .toList(),
-                        onChanged: (val) => setModalState(() => durum = val!),
+                        onChanged: (v) => setM(() => durum = v ?? durum),
                         dropdownColor: AppColors.inputFill,
                         style: const TextStyle(color: Colors.white),
-                        decoration: _koyuInputDekorasyonu(
+                        decoration: koyuInput(
                             label: 'Durum', icon: Icons.stacked_bar_chart),
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: DropdownButtonFormField<String>(
-                        value: oncelik,
-                        items: ['Acil', 'Normal', 'Düşük']
+                        initialValue: oncelik,
+                        isExpanded: true,
+                        items: oncelikler
                             .map((e) =>
                                 DropdownMenuItem(value: e, child: Text(e)))
                             .toList(),
-                        onChanged: (val) => setModalState(() => oncelik = val!),
+                        onChanged: (v) => setM(() => oncelik = v ?? oncelik),
                         dropdownColor: AppColors.inputFill,
                         style: const TextStyle(color: Colors.white),
-                        decoration: _koyuInputDekorasyonu(
-                            label: 'Öncelik', icon: Icons.flag),
+                        decoration:
+                            koyuInput(label: 'Öncelik', icon: Icons.flag),
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 32),
+                const SizedBox(height: 28),
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.accent,
@@ -352,76 +254,62 @@ class _KanbanScreenState extends State<KanbanScreen> {
                         borderRadius: BorderRadius.circular(10)),
                     padding: const EdgeInsets.symmetric(vertical: 14),
                   ),
-                  onPressed: () async {
-                    if (baslikController.text.trim().isEmpty) return;
+                  onPressed: kaydediliyor
+                      ? null
+                      : () async {
+                          final baslik = baslikCtrl.text.trim();
+                          if (baslik.isEmpty) {
+                            bildir(context, 'Alt görev adını yazın.',
+                                renk: Colors.orange);
+                            return;
+                          }
+                          final ana = anaFaaliyetler
+                              .firstWhere((a) => a['id'].toString() == anaId);
+                          final kisi = kisiler
+                              .where((k) => k['id'].toString() == kisiId)
+                              .firstOrNull;
+                          final birimAdi =
+                              yetki.birimAdi.isEmpty ? 'Genel' : yetki.birimAdi;
 
-                    // Ana faaliyetin bilgilerini bul ki alt görev de o komisyona ait olsun
-                    final seciliAnaFaaliyet = anaFaaliyetler.firstWhere(
-                        (f) => f['id'].toString() == seciliAnaFaaliyetId);
+                          final veri = <String, dynamic>{
+                            'baslik': baslik,
+                            'tarih': tarihYaz(teslim),
+                            'baslangic_tarihi': isoTarih(teslim),
+                            'bitis_tarihi': null,
+                            'durum': durum,
+                            'oncelik': oncelik,
+                            'atanan_kisi_id': kisiId,
+                            'sorumlu_kisi_ad':
+                                kisi == null ? '' : tamAdGetir(kisi),
+                            'bagli_faaliyet_id': ana['id'],
+                            'bagli_faaliyet_baslik': ana['baslik'],
+                            'hedef_birim_id': ana['hedef_birim_id'],
+                            'hedef_birim': ana['hedef_birim'] ?? 'Genel',
+                            'olusturan_unvan': birimAdi,
+                          };
+                          if (mevcut == null) {
+                            veri['atayan_ad'] = yetki.atayanEtiketi;
+                            veri['kategori'] = 'Alt Görev';
+                          }
 
-                    final atayanAdSoyad =
-                        '${aktifKullanici?['ad'] ?? ''} ${aktifKullanici?['soyad'] ?? ''}'
-                            .trim();
-                    final atayanUnvan = aktifKullanici?['unvan'] ?? '';
-                    final atayanTamAd = atayanUnvan.isNotEmpty
-                        ? '$atayanAdSoyad ($atayanUnvan)'
-                        : atayanAdSoyad;
-
-                    String sorumluKisiAd = '';
-                    if (seciliKisiId != null) {
-                      final secilen = yoneticiler.firstWhere(
-                          (y) => y['id'].toString() == seciliKisiId,
-                          orElse: () => yoneticiler.first);
-                      sorumluKisiAd =
-                          '${secilen['ad'] ?? ''} ${secilen['soyad'] ?? ''}'
-                              .trim();
-                    }
-
-                    final Map<String, dynamic> kayitVerisi = {
-                      'baslik': baslikController.text.trim(),
-                      'tarih':
-                          '${teslimTarihi.day}.${teslimTarihi.month}.${teslimTarihi.year}',
-                      'durum': durum,
-                      'oncelik': oncelik,
-                      'atanan_kisi_id': seciliKisiId,
-                      'sorumlu_kisi_ad': sorumluKisiAd,
-                      'atayan_ad': atayanTamAd,
-                      'bagli_faaliyet_id': seciliAnaFaaliyet['id'],
-                      'bagli_faaliyet_baslik': seciliAnaFaaliyet['baslik'],
-                      // Alt görev, ana görevin komisyonuna otomatik atanır
-                      'hedef_birim_id': seciliAnaFaaliyet['hedef_birim_id'],
-                      'hedef_birim': seciliAnaFaaliyet['hedef_birim'],
-                      'olusturan_unvan': atayanUnvan, // Sorumlu birim
-                      'kategori': 'Alt Görev',
-                    };
-
-                    if (isUpdate) {
-                      await Supabase.instance.client
-                          .from('faaliyetler')
-                          .update(kayitVerisi)
-                          .eq('id', mevcutGorev['id']);
-                    } else {
-                      await Supabase.instance.client
-                          .from('faaliyetler')
-                          .insert(kayitVerisi);
-                    }
-
-                    if (seciliKisiId != null && !isUpdate) {
-                      await NotificationService.gorevBildirimiGonder(
-                        hedefKullaniciId: seciliKisiId!,
-                        faaliyetBaslik: baslikController.text.trim(),
-                        tarih:
-                            '${teslimTarihi.day}.${teslimTarihi.month}.${teslimTarihi.year}',
-                        birim: 'Yeni Alt Görev Eklendi',
-                      );
-                    }
-
-                    if (!context.mounted) return;
-                    Navigator.pop(context);
-                    setState(() {});
-                  },
-                  icon: const Icon(Icons.check, size: 20),
-                  label: Text(isUpdate ? 'Güncelle' : 'Alt Görevi Ata',
+                          setM(() => kaydediliyor = true);
+                          final ok = await FaaliyetServisi.kaydet(context,
+                              mevcut: mevcut, veri: veri);
+                          if (!context.mounted) return;
+                          if (ok) {
+                            Navigator.pop(dialogCtx);
+                          } else {
+                            setM(() => kaydediliyor = false);
+                          }
+                        },
+                  icon: kaydediliyor
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.black))
+                      : const Icon(Icons.check, size: 20),
+                  label: Text(mevcut != null ? 'Güncelle' : 'Alt Görevi Ata',
                       style: const TextStyle(
                           fontWeight: FontWeight.bold, fontSize: 15)),
                 ),
@@ -433,118 +321,136 @@ class _KanbanScreenState extends State<KanbanScreen> {
     );
   }
 
-  Widget _kanbanKarti(Map<String, dynamic> isItem) {
-    final bool tamYetkili =
-        _isAdmin || isItem['olusturan_unvan'] == _kullaniciBirim;
-    final bool isAltGorev = isItem['bagli_faaliyet_baslik'] != null;
+  Widget _kanbanKarti(Map<String, dynamic> f) {
+    final yonet = _yetki?.yonetebilir(f) ?? false;
+    final durumDegisir = _yetki?.durumDegistirebilir(f) ?? false;
+    final altGorev = f['bagli_faaliyet_baslik'] != null;
+    final kisi = (f['sorumlu_kisi_ad'] ?? '').toString();
 
     return Card(
       color: AppColors.card,
       margin: const EdgeInsets.only(bottom: 12),
+      clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(10),
           side: BorderSide(
-              color: isAltGorev
+              color: altGorev
                   ? Colors.tealAccent.withValues(alpha: 0.3)
                   : Colors.white12,
-              width: isAltGorev ? 1.5 : 1.0)),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (isAltGorev)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Text(
-                    '🔗 Ana Etkinlik: ${isItem['bagli_faaliyet_baslik']}',
-                    style: const TextStyle(
-                        color: Colors.tealAccent,
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold)),
+              width: altGorev ? 1.5 : 1.0)),
+      child: InkWell(
+        onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+                builder: (_) =>
+                    FaaliyetDetayScreen(faaliyetId: f['id'].toString()))),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (altGorev)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Text('🔗 Ana Etkinlik: ${f['bagli_faaliyet_baslik']}',
+                      style: const TextStyle(
+                          color: Colors.tealAccent,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold)),
+                ),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                      child: Text(f['baslik']?.toString() ?? '',
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14))),
+                  if (durumDegisir)
+                    PopupMenuButton<String>(
+                      color: AppColors.inputFill,
+                      tooltip: 'Durumu değiştir',
+                      padding: EdgeInsets.zero,
+                      iconSize: 20,
+                      icon: const Icon(Icons.swap_horiz,
+                          color: Colors.orangeAccent),
+                      onSelected: (v) => _durumTasi(f, v),
+                      itemBuilder: (_) => durumlar
+                          .where((d) => d != f['durum'])
+                          .map((d) => PopupMenuItem(
+                              value: d,
+                              child: Text('→ $d',
+                                  style: const TextStyle(color: Colors.white))))
+                          .toList(),
+                    ),
+                  if (yonet) ...[
+                    GestureDetector(
+                        onTap: () => _altGorevAc(mevcut: f),
+                        child: const Padding(
+                          padding: EdgeInsets.only(left: 6),
+                          child: Icon(Icons.edit,
+                              size: 18, color: Colors.blueAccent),
+                        )),
+                    GestureDetector(
+                        onTap: () => FaaliyetServisi.sil(context, f),
+                        child: const Padding(
+                          padding: EdgeInsets.only(left: 6),
+                          child: Icon(Icons.delete,
+                              size: 18, color: Colors.redAccent),
+                        )),
+                  ],
+                ],
               ),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                    child: Text(isItem['baslik'] ?? '',
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14))),
-                if (tamYetkili)
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      GestureDetector(
-                          onTap: () =>
-                              _kanbandanAltGorevEkleAc(mevcutGorev: isItem),
-                          child: const Icon(Icons.edit,
-                              size: 18, color: Colors.blueAccent)),
-                      const SizedBox(width: 8),
-                      GestureDetector(
-                          onTap: () => _gorevSil(isItem['id'].toString()),
-                          child: const Icon(Icons.delete,
-                              size: 18, color: Colors.redAccent)),
-                    ],
-                  ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text('⏰ Teslim: ${isItem['tarih'] ?? '-'}',
-                style: const TextStyle(color: Colors.white70, fontSize: 11)),
-            if (isItem['sorumlu_kisi_ad'] != null &&
-                isItem['sorumlu_kisi_ad'].toString().isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text('👤 Atanan: ${isItem['sorumlu_kisi_ad']}',
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold)),
-              ),
-            const SizedBox(height: 4),
-            Text('🎯 Hedef Komisyon: ${isItem['hedef_birim'] ?? 'Genel'}',
-                style:
-                    const TextStyle(color: Colors.orangeAccent, fontSize: 11)),
-          ],
+              const SizedBox(height: 8),
+              Text('⏰ ${tarihGoster(f['tarih']?.toString())}',
+                  style: const TextStyle(color: Colors.white70, fontSize: 11)),
+              if (kisi.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text('👤 Atanan: $kisi',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold)),
+                ),
+              const SizedBox(height: 4),
+              Text('🏢 Sorumlu: ${f['olusturan_unvan'] ?? '-'}',
+                  style: const TextStyle(
+                      color: Colors.orangeAccent, fontSize: 11)),
+              Text('🎯 Hedef: ${f['hedef_birim'] ?? 'Genel'}',
+                  style:
+                      const TextStyle(color: AppColors.accent, fontSize: 11)),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _sutunOlustur(String baslik, String dbDurum,
-      List<Map<String, dynamic>> isler, Color renk) {
+  Widget _sutun(String baslik, List<Map<String, dynamic>> isler, Color renk) {
     return Container(
       width: 290,
       margin: const EdgeInsets.symmetric(horizontal: 6),
       child: DragTarget<Map<String, dynamic>>(
-        onAcceptWithDetails: (details) {
-          final data = details.data;
-          if (data['durum'] != dbDurum) {
-            _durumGuncelle(
-                data['id'].toString(), dbDurum, data['olusturan_unvan'] ?? '');
-          }
-        },
-        builder: (context, candidateData, rejectedData) {
+        onAcceptWithDetails: (d) => _durumTasi(d.data, baslik),
+        builder: (context, aday, _) {
           return Container(
             decoration: BoxDecoration(
-              color: candidateData.isNotEmpty
-                  ? renk.withOpacity(0.1)
-                  : AppColors.background.withOpacity(0.5),
+              color: aday.isNotEmpty
+                  ? renk.withValues(alpha: 0.1)
+                  : AppColors.background.withValues(alpha: 0.5),
               borderRadius: BorderRadius.circular(12),
-              border: candidateData.isNotEmpty
-                  ? Border.all(color: renk, width: 2)
-                  : null,
+              border:
+                  aday.isNotEmpty ? Border.all(color: renk, width: 2) : null,
             ),
             child: Column(
               children: [
                 Container(
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   decoration: BoxDecoration(
-                      color: renk.withOpacity(0.2),
+                      color: renk.withValues(alpha: 0.2),
                       borderRadius: const BorderRadius.vertical(
                           top: Radius.circular(12))),
                   child: Center(
@@ -558,21 +464,20 @@ class _KanbanScreenState extends State<KanbanScreen> {
                   child: ListView.builder(
                     padding: const EdgeInsets.all(8),
                     itemCount: isler.length,
-                    itemBuilder: (context, index) {
-                      final isItem = isler[index];
-                      final bool tamYetkili = _isAdmin ||
-                          isItem['olusturan_unvan'] == _kullaniciBirim;
-                      if (!tamYetkili) return _kanbanKarti(isItem);
-
-                      return Draggable<Map<String, dynamic>>(
-                        data: isItem,
+                    itemBuilder: (context, i) {
+                      final f = isler[i];
+                      if (!(_yetki?.durumDegistirebilir(f) ?? false)) {
+                        return _kanbanKarti(f);
+                      }
+                      return LongPressDraggable<Map<String, dynamic>>(
+                        data: f,
                         feedback: Material(
                             color: Colors.transparent,
-                            child: SizedBox(
-                                width: 280, child: _kanbanKarti(isItem))),
+                            child:
+                                SizedBox(width: 280, child: _kanbanKarti(f))),
                         childWhenDragging:
-                            Opacity(opacity: 0.3, child: _kanbanKarti(isItem)),
-                        child: _kanbanKarti(isItem),
+                            Opacity(opacity: 0.3, child: _kanbanKarti(f)),
+                        child: _kanbanKarti(f),
                       );
                     },
                   ),
@@ -587,7 +492,7 @@ class _KanbanScreenState extends State<KanbanScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_yetkilerYuklendi) {
+    if (!_yuklendi) {
       return const Scaffold(
           backgroundColor: AppColors.background,
           body: Center(
@@ -602,16 +507,16 @@ class _KanbanScreenState extends State<KanbanScreen> {
         backgroundColor: AppColors.background,
         iconTheme: const IconThemeData(color: Colors.white),
       ),
-      floatingActionButton: _kullaniciRol == 'Gönüllü'
-          ? null
-          : FloatingActionButton.extended(
+      floatingActionButton: (_yetki?.yazabilir ?? false)
+          ? FloatingActionButton.extended(
               backgroundColor: AppColors.accent,
-              onPressed: () => _kanbandanAltGorevEkleAc(),
+              onPressed: () => _altGorevAc(),
               icon: const Icon(Icons.add_task, color: Colors.black),
               label: const Text('Alt Görev Ata',
                   style: TextStyle(
                       color: Colors.black, fontWeight: FontWeight.bold)),
-            ),
+            )
+          : null,
       body: Column(
         children: [
           Container(
@@ -622,24 +527,22 @@ class _KanbanScreenState extends State<KanbanScreen> {
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Row(
-                children: _komisyonFiltreleri.map((komisyon) {
-                  final isSelected = _seciliKomisyon == komisyon;
+                children: _komisyonlar.map((k) {
+                  final s = _komisyon == k;
                   return Padding(
                     padding: const EdgeInsets.only(right: 8),
                     child: ChoiceChip(
-                      label: Text(komisyon),
-                      selected: isSelected,
-                      onSelected: (val) =>
-                          setState(() => _seciliKomisyon = komisyon),
+                      label: Text(k),
+                      selected: s,
+                      onSelected: (_) => setState(() => _komisyon = k),
                       backgroundColor: Colors.transparent,
                       selectedColor: AppColors.accent,
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8),
                           side: const BorderSide(color: Colors.white24)),
                       labelStyle: TextStyle(
-                          color: isSelected ? Colors.black : Colors.white70,
-                          fontWeight:
-                              isSelected ? FontWeight.bold : FontWeight.normal),
+                          color: s ? Colors.black : Colors.white70,
+                          fontWeight: s ? FontWeight.bold : FontWeight.normal),
                     ),
                   );
                 }).toList(),
@@ -648,50 +551,40 @@ class _KanbanScreenState extends State<KanbanScreen> {
           ),
           Expanded(
             child: StreamBuilder<List<Map<String, dynamic>>>(
-              stream: Supabase.instance.client
-                  .from('faaliyetler')
-                  .stream(primaryKey: ['id'])
-                  .order('created_at', ascending: false)
-                  .map((maps) => List<Map<String, dynamic>>.from(maps)),
+              stream: _stream,
               builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting &&
-                    !snapshot.hasData) {
+                if (snapshot.hasError) {
+                  return const Center(
+                      child: Text('Veri alınamadı.',
+                          style: TextStyle(color: Colors.redAccent)));
+                }
+                if (!snapshot.hasData) {
                   return const Center(
                       child:
                           CircularProgressIndicator(color: AppColors.accent));
                 }
-
-                List<Map<String, dynamic>> tumGorevler =
-                    snapshot.hasData ? snapshot.data! : [];
-
-                if (_seciliKomisyon != 'Tümü') {
-                  tumGorevler = tumGorevler
-                      .where((f) => f['hedef_birim'] == _seciliKomisyon)
+                var hepsi = snapshot.data!;
+                if (_komisyon != 'Tümü') {
+                  hepsi = hepsi
+                      .where((f) => f['hedef_birim'] == _komisyon)
                       .toList();
                 }
-
-                final yapilacak = tumGorevler
-                    .where((f) => f['durum'] == 'Yapılacak')
-                    .toList();
-                final yapiliyor = tumGorevler
-                    .where((f) => f['durum'] == 'Yapılıyor')
-                    .toList();
-                final tamamlandi = tumGorevler
-                    .where((f) => f['durum'] == 'Tamamlandı')
-                    .toList();
+                hepsi = tarihSirali(hepsi);
+                List<Map<String, dynamic>> d(String s) =>
+                    hepsi.where((f) => f['durum'] == s).toList();
 
                 return Padding(
-                  padding: const EdgeInsets.all(8.0),
+                  padding: const EdgeInsets.all(8),
                   child: SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
                     child: Row(
                       children: [
-                        _sutunOlustur('Yapılacak', 'Yapılacak', yapilacak,
+                        _sutun('Yapılacak', d('Yapılacak'),
                             Colors.lightBlueAccent),
-                        _sutunOlustur('Yapılıyor', 'Yapılıyor', yapiliyor,
-                            Colors.orangeAccent),
-                        _sutunOlustur('Tamamlandı', 'Tamamlandı', tamamlandi,
-                            Colors.greenAccent),
+                        _sutun(
+                            'Yapılıyor', d('Yapılıyor'), Colors.orangeAccent),
+                        _sutun(
+                            'Tamamlandı', d('Tamamlandı'), Colors.greenAccent),
                       ],
                     ),
                   ),

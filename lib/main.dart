@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'core/constants.dart';
@@ -9,14 +10,14 @@ import 'screens/login_screen.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // anonKey uyarısını çözmek için publishableKey kullanıldı
   await Supabase.initialize(
     url: 'https://ricvcziubadmdkogwfxd.supabase.co',
-    anonKey: 'sb_publishable_OxFaHkmvQr0ZIw1i0utZvA_HEroyOj-',
+    publishableKey: 'sb_publishable_OxFaHkmvQr0ZIw1i0utZvA_HEroyOj-',
   );
 
   await NotificationService.baslat();
 
-  // Beni Hatırla Kontrolü
   final prefs = await SharedPreferences.getInstance();
   final beniHatirla = prefs.getBool('beni_hatirla') ?? true;
   final mevcutOturum = Supabase.instance.client.auth.currentSession;
@@ -27,7 +28,6 @@ Future<void> main() async {
       dogrudanGiris = true;
       await NotificationService.kullaniciCihaziniSenkronizeEt();
     } else {
-      // Kullanıcı "Beni Hatırla" seçmediyse açılışta oturumu kapat
       await Supabase.instance.client.auth.signOut();
     }
   }
@@ -44,6 +44,13 @@ class KocaeliGenclikApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Kocaeli Genç İHH Yıllık Plan',
+      locale: const Locale('tr', 'TR'),
+      supportedLocales: const [Locale('tr', 'TR'), Locale('en', 'US')],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       theme: ThemeData(
         brightness: Brightness.dark,
         primarySwatch: Colors.green,

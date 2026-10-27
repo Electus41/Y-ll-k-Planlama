@@ -1,10 +1,11 @@
-import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 import 'package:onesignal_flutter/onesignal_flutter.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'constants.dart';
 
 class NotificationService {
+  static bool _gozlemciEklendi = false;
+
   static bool get _aktifMi =>
       !kIsWeb &&
       OneSignalConfig.appId.isNotEmpty &&
@@ -21,7 +22,7 @@ class NotificationService {
     }
   }
 
-  /// Giriş yapan kullanıcının bilgilerini ve telefon bildirim ID'sini profiller tablosuna kaydeder
+  /// Giriş yapan kullanıcıyı OneSignal'a bağlar ve cihaz kimliğini profile yazar.
   static Future<void> kullaniciCihaziniSenkronizeEt() async {
     final user = supabase.auth.currentUser;
     if (user == null) return;
@@ -31,6 +32,24 @@ class NotificationService {
       try {
         await OneSignal.login(user.id);
         subId = OneSignal.User.pushSubscription.id;
+
+        // Abonelik id'si geç oluşabilir: oluşunca profile yaz.
+        if (!_gozlemciEklendi) {
+          _gozlemciEklendi = true;
+          OneSignal.User.pushSubscription.addObserver((state) async {
+            final id = state.current.id;
+            final u = supabase.auth.currentUser;
+            if (id != null && id.isNotEmpty && u != null) {
+              try {
+                await supabase
+                    .from('profiller')
+                    .update({'onesignal_id': id}).eq('id', u.id);
+              } catch (e) {
+                debugPrint('onesignal_id yazılamadı: $e');
+              }
+            }
+          });
+        }
       } catch (e) {
         debugPrint('OneSignal ID alınamadı: $e');
       }
@@ -41,83 +60,59 @@ class NotificationService {
     try {
       final mevcut = await supabase
           .from('profiller')
-          .select()
+          .select('id')
           .eq('id', user.id)
           .maybeSingle();
 
-      final Map<String, dynamic> veri = {
-        'id': user.id,
-        'ad': mevcut?['ad'] ?? meta['ad'] ?? '',
-        'soyad': mevcut?['soyad'] ?? meta['soyad'] ?? '',
-        'telefon': mevcut?['telefon'] ?? meta['telefon'] ?? '',
-        'unvan': mevcut?['unvan'] ?? meta['unvan'] ?? 'Yönetici',
-        'email': user.email ?? '',
-      };
-
-      if (subId != null && subId.isNotEmpty) {
-        veri['onesignal_id'] = subId;
+      if (mevcut == null) {
+        await supabase.from('profiller').upsert({
+          'id': user.id,
+          'ad': meta['ad'] ?? '',
+          'soyad': meta['soyad'] ?? '',
+          'telefon': meta['telefon'] ?? '',
+          'unvan': meta['unvan'],
+          'bagli_birim': meta['bagli_birim'],
+          'email': user.email ?? '',
+          if (subId != null && subId.isNotEmpty) 'onesignal_id': subId,
+        });
+      } else if (subId != null && subId.isNotEmpty) {
+        await supabase
+            .from('profiller')
+            .update({'onesignal_id': subId}).eq('id', user.id);
       }
-
-      await supabase.from('profiller').upsert(veri);
     } catch (e) {
       debugPrint('Profil senkronizasyon uyarısı: $e');
     }
   }
 
-  /// Görev atanan kişiye (Uygulama kapalı olsa bile) anlık Push Bildirim gönderir
-  static Future<void> gorevBildirimiGonder({
+  /// Görev atanan kişiye push bildirim gönderir (Supabase Edge Function üzerinden).
+  /// Başarılıysa null, başarısızsa hata metni döner.
+  static Future<String?> gorevBildirimiGonder({
     required String hedefKullaniciId,
     required String faaliyetBaslik,
     required String tarih,
     required String birim,
+    String baslik = '📌 Yeni Görev Atandı!',
   }) async {
-    if (OneSignalConfig.restApiKey.contains('BURAYA') ||
-        OneSignalConfig.appId.contains('BURAYA')) {
-      debugPrint(
-          'OneSignal anahtarları henüz girilmediği için bildirim atlandı.');
-      return;
-    }
-
     try {
-      final profil = await supabase
-          .from('profiller')
-          .select('onesignal_id')
-          .eq('id', hedefKullaniciId)
-          .maybeSingle();
-
-      final String? onesignalId = profil?['onesignal_id'];
-
-      final Map<String, dynamic> govde = {
-        'app_id': OneSignalConfig.appId,
-        'headings': {
-          'tr': '📌 Yeni Görev Atandı!',
-          'en': '📌 Yeni Görev Atandı!'
-        },
-        'contents': {
-          'tr': '$faaliyetBaslik ($birim) - Tarih: $tarih',
-          'en': '$faaliyetBaslik ($birim) - Tarih: $tarih',
-        },
-      };
-
-      if (onesignalId != null && onesignalId.isNotEmpty) {
-        govde['include_subscription_ids'] = [onesignalId];
-      } else {
-        govde['include_aliases'] = {
-          'external_id': [hedefKullaniciId]
-        };
-        govde['target_channel'] = 'push';
-      }
-
-      await http.post(
-        Uri.parse('https://api.onesignal.com/notifications'),
-        headers: {
-          'Content-Type': 'application/json; charset=utf-8',
-          'Authorization': 'Key ${OneSignalConfig.restApiKey}',
-        },
-        body: jsonEncode(govde),
-      );
+      final res = await supabase.functions.invoke('gorev-bildirimi', body: {
+        'hedefKullaniciId': hedefKullaniciId,
+        'faaliyetBaslik': faaliyetBaslik,
+        'tarih': tarih,
+        'birim': birim,
+        'baslik': baslik,
+      });
+      final data = res.data;
+      if (data is Map && data['hata'] != null) return data['hata'].toString();
+      return null;
+    } on FunctionException catch (e) {
+      debugPrint('Bildirim fonksiyonu hatası (${e.status}): ${e.details}');
+      final d = e.details;
+      if (d is Map && d['hata'] != null) return d['hata'].toString();
+      return 'Bildirim servisi hatası (${e.status})';
     } catch (e) {
       debugPrint('Bildirim gönderme hatası: $e');
+      return e.toString();
     }
   }
 }
