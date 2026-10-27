@@ -1,109 +1,81 @@
 import 'package:flutter/material.dart';
 import 'constants.dart';
-import 'notification_service.dart';
 import 'ortak.dart';
 
-/// Faaliyet ekle / güncelle / sil / durum değiştir işlemleri tek yerde.
-/// Bildirim kuralı: yeni kayıtta veya atanan kişi değiştiğinde gider.
 class FaaliyetServisi {
   static Future<bool> kaydet(BuildContext context,
       {Map<String, dynamic>? mevcut,
       required Map<String, dynamic> veri}) async {
     try {
-      if (mevcut != null) {
-        final s = await supabase
-            .from('faaliyetler')
-            .update(veri)
-            .eq('id', mevcut['id'])
-            .select();
-        if (s.isEmpty) {
-          if (context.mounted) {
-            bildir(context, 'Bu kaydı değiştirme yetkiniz yok.',
-                renk: Colors.orange);
-          }
-          return false;
+      if (mevcut == null) {
+        await supabase.from('faaliyetler').insert(veri);
+
+        // EĞER ONAYLIYSA VE KİŞİ ATANMIŞSA ANINDA BİLDİRİM GÖNDER
+        if (veri['onay_durumu'] != 'Bekliyor' &&
+            veri['atanan_kisi_id'] != null) {
+          await supabase.functions.invoke(
+            'gorev-bildirimi',
+            body: {
+              'hedefKullaniciId': veri['atanan_kisi_id'],
+              'faaliyetBaslik': veri['baslik'],
+              'tarih': veri['tarih'],
+              'birim': veri['hedef_birim'] ?? 'Genel',
+              'baslik': '📢 Yeni Bir Görev Atandı!'
+            },
+          );
         }
       } else {
-        await supabase.from('faaliyetler').insert(veri);
+        await supabase.from('faaliyetler').update(veri).eq('id', mevcut['id']);
+
+        // GÖREV BAŞKA BİRİNE DEVREDİLDİYSE VEYA YENİ ONAYLANDIYSA BİLDİRİM GÖNDER
+        if (veri['onay_durumu'] != 'Bekliyor' &&
+            veri['atanan_kisi_id'] != null &&
+            mevcut['atanan_kisi_id'] != veri['atanan_kisi_id']) {
+          await supabase.functions.invoke(
+            'gorev-bildirimi',
+            body: {
+              'hedefKullaniciId': veri['atanan_kisi_id'],
+              'faaliyetBaslik': veri['baslik'],
+              'tarih': veri['tarih'],
+              'birim': veri['hedef_birim'] ?? 'Genel',
+              'baslik': '🔄 Görev Size Devredildi / Onaylandı'
+            },
+          );
+        }
       }
+      return true;
     } catch (e) {
-      debugPrint('Faaliyet kaydedilemedi: $e');
-      if (context.mounted) {
-        bildir(context,
-            'Kaydedilemedi. Yetkiniz olmayabilir veya bağlantı sorunu var.',
-            renk: Colors.red);
-      }
+      debugPrint('Kaydetme hatası: $e');
+      if (context.mounted)
+        bildir(context, 'İşlem başarısız: $e', renk: Colors.red);
       return false;
     }
-
-    final yeni = veri['atanan_kisi_id']?.toString();
-    final eski = mevcut?['atanan_kisi_id']?.toString();
-    if (yeni != null && yeni != eski) {
-      final hata = await NotificationService.gorevBildirimiGonder(
-        hedefKullaniciId: yeni,
-        faaliyetBaslik: veri['baslik'].toString(),
-        tarih: veri['tarih'].toString(),
-        birim: mevcut == null ? 'Yeni Görev' : 'Görev Size Atandı',
-      );
-      if (hata != null && context.mounted) {
-        bildir(context, 'Kaydedildi ama bildirim gönderilemedi: $hata',
-            renk: Colors.orange);
-      }
-    }
-    return true;
   }
 
-  static Future<bool> sil(BuildContext context, Map<String, dynamic> f) async {
+  static Future<void> sil(BuildContext context, Map<String, dynamic> f) async {
     final onay = await onayDialogu(context,
-        baslik: 'Silmek İstediğinize Emin Misiniz?',
-        mesaj: '"${f['baslik']}" kalıcı olarak silinecek.');
-    if (!onay) return false;
+        baslik: 'Faaliyeti Sil',
+        mesaj: '"${f['baslik']}" silinecek. Onaylıyor musunuz?');
+    if (!onay) return;
     try {
-      final s = await supabase
-          .from('faaliyetler')
-          .delete()
-          .eq('id', f['id'])
-          .select();
-      if (s.isEmpty) {
-        if (context.mounted) {
-          bildir(context, 'Bu kaydı silme yetkiniz yok.', renk: Colors.orange);
-        }
-        return false;
-      }
-      if (context.mounted)
-        bildir(context, 'Faaliyet silindi.', renk: Colors.red);
-      return true;
+      await supabase.from('faaliyetler').delete().eq('id', f['id']);
+      if (context.mounted) bildir(context, 'Faaliyet başarıyla silindi.');
     } catch (e) {
       debugPrint('Faaliyet silinemedi: $e');
-      if (context.mounted) {
-        bildir(context, 'Silinemedi. Lütfen tekrar deneyin.', renk: Colors.red);
-      }
-      return false;
+      if (context.mounted) bildir(context, 'Silinemedi.', renk: Colors.red);
     }
   }
 
-  static Future<bool> durumGuncelle(
+  static Future<void> durumGuncelle(
       BuildContext context, Map<String, dynamic> f, String yeniDurum) async {
     try {
-      final s = await supabase
+      await supabase
           .from('faaliyetler')
-          .update({'durum': yeniDurum})
-          .eq('id', f['id'])
-          .select();
-      if (s.isEmpty) {
-        if (context.mounted) {
-          bildir(context, 'Bu görevin durumunu değiştirme yetkiniz yok.',
-              renk: Colors.orange);
-        }
-        return false;
-      }
-      return true;
+          .update({'durum': yeniDurum}).eq('id', f['id']);
+      if (context.mounted) bildir(context, 'Durum başarıyla güncellendi.');
     } catch (e) {
       debugPrint('Durum güncellenemedi: $e');
-      if (context.mounted) {
-        bildir(context, 'Durum güncellenemedi.', renk: Colors.red);
-      }
-      return false;
+      if (context.mounted) bildir(context, 'Güncellenemedi.', renk: Colors.red);
     }
   }
 }

@@ -42,7 +42,6 @@ class _AcademyCalendarScreenState extends State<AcademyCalendarScreen> {
           .eq('kategori', komisyonKategorisi)
           .order('sira');
 
-      // Başkanları takvim filtrelerinden gizler
       k = d
           .map<String>((b) => b['ad'].toString())
           .where((ad) => !ad.contains('Başkan'))
@@ -58,6 +57,9 @@ class _AcademyCalendarScreenState extends State<AcademyCalendarScreen> {
   }
 
   bool _gorunur(Map<String, dynamic> f) {
+    // ONAY BEKLEYENLERİ TAKVİMDEN GİZLİYORUZ
+    if (f['onay_durumu'] == 'Bekliyor') return false;
+
     if (_komisyon != 'Tümü' && f['hedef_birim'] != _komisyon) return false;
     final r = tarihCoz(f['tarih']?.toString());
     if (r == null) {

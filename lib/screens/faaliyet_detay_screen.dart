@@ -61,7 +61,7 @@ class _FaaliyetDetayScreenState extends State<FaaliyetDetayScreen> {
     final adres = (f['konum_adres'] ?? '').toString().trim();
     Uri uri;
     if (adres.startsWith('http')) {
-      uri = Uri.parse(adres); // Google Haritalar paylaşım linki yapıştırılmışsa
+      uri = Uri.parse(adres);
     } else {
       final q = [ad, adres].where((e) => e.isNotEmpty).join(' ');
       uri = Uri.https(
@@ -548,10 +548,7 @@ class _FaaliyetDetayScreenState extends State<FaaliyetDetayScreen> {
                   IconButton(
                       icon: const Icon(Icons.delete, color: Colors.redAccent),
                       tooltip: 'Sil',
-                      onPressed: () async {
-                        final silindi = await FaaliyetServisi.sil(context, f);
-                        if (silindi && context.mounted) Navigator.pop(context);
-                      }),
+                      onPressed: () => FaaliyetServisi.sil(context, f)),
                 ]
               : null,
         );

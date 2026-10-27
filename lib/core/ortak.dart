@@ -222,27 +222,64 @@ String para(num v) {
   return '$tam,${p[1]} ₺';
 }
 
-// ---------- Yetki ----------
+// ---------- İLÇELER ----------
+class Ilceler {
+  static List<Map<String, dynamic>> liste = [];
+
+  static Future<void> yukle() async {
+    try {
+      final d =
+          await supabase.from('ilceler').select('id, ad, sira').order('sira');
+      liste = List<Map<String, dynamic>>.from(d);
+    } catch (e) {
+      debugPrint('İlçeler alınamadı: $e');
+    }
+  }
+
+  static String ad(dynamic id) {
+    if (id == null) return 'İl (Merkez)';
+    final s = id.toString();
+    for (final i in liste) {
+      if (i['id'].toString() == s) return i['ad'].toString();
+    }
+    return '-';
+  }
+}
+
+// ---------- YETKİ ----------
 class Yetki {
-  final String id, adSoyad, unvan, birim, rol;
+  final String id, adSoyad, unvan, birim, rol, onay;
+  final String? ilceId, birimId;
+  final bool ilceYoneticisi;
+
   const Yetki({
     required this.id,
     required this.adSoyad,
     required this.unvan,
     required this.birim,
     required this.rol,
+    required this.onay,
+    required this.ilceYoneticisi,
+    this.ilceId,
+    this.birimId,
   });
 
   bool get admin => ustUnvanlar.contains(unvan) || rol == 'Admin';
-  bool get yazabilir => admin || rol != 'Gönüllü';
+  bool get onayli => admin || onay == 'onaylandı';
+  bool get bekliyor => !onayli;
+  bool get ilceAdmini => ilceYoneticisi && onayli && ilceId != null;
+  bool get yazabilir =>
+      admin || (onayli && (ilceYoneticisi || rol != 'Gönüllü'));
   bool get gonullu => !yazabilir;
 
-  /// RLS politikalarıyla aynı mantık: admin veya kendi biriminin kaydı.
+  /// RLS politikalarıyla aynı mantık:
+  /// il yöneticisi hepsini, ilçe yöneticisi kendi ilçesini, birim yöneticisi kendi biriminin kaydını yönetir.
   bool yonetebilir(Map<String, dynamic> f) {
     if (admin) return true;
     if (!yazabilir) return false;
-    final s = (f['olusturan_unvan'] ?? '').toString();
-    return s.isNotEmpty && (s == birim || s == unvan);
+    if (ilceAdmini && f['ilce_id']?.toString() == ilceId) return true;
+    final sb = f['sorumlu_birim_id']?.toString();
+    return sb != null && sb == birimId;
   }
 
   bool durumDegistirebilir(Map<String, dynamic> f) =>
@@ -254,23 +291,35 @@ class Yetki {
   static Future<Yetki?> yukle() async {
     final user = supabase.auth.currentUser;
     if (user == null) return null;
+    await Ilceler.yukle();
     try {
       final p = await supabase
           .from('profiller')
-          .select('ad, soyad, unvan, bagli_birim, yetki_seviyesi')
+          .select(
+              'ad, soyad, unvan, bagli_birim, yetki_seviyesi, ilce_id, birim_id, onay_durumu, ilce_yoneticisi')
           .eq('id', user.id)
           .maybeSingle();
       return Yetki(
         id: user.id,
-        adSoyad: tamAdGetir(p),
+        adSoyad: '${p?['ad'] ?? ''} ${p?['soyad'] ?? ''}'.trim(),
         unvan: (p?['unvan'] ?? '').toString(),
         birim: (p?['bagli_birim'] ?? '').toString(),
         rol: (p?['yetki_seviyesi'] ?? 'Gönüllü').toString(),
+        onay: (p?['onay_durumu'] ?? 'bekliyor').toString(),
+        ilceYoneticisi: p?['ilce_yoneticisi'] == true,
+        ilceId: p?['ilce_id']?.toString(),
+        birimId: p?['birim_id']?.toString(),
       );
     } catch (e) {
       debugPrint('Yetki yüklenemedi: $e');
       return Yetki(
-          id: user.id, adSoyad: '', unvan: '', birim: '', rol: 'Gönüllü');
+          id: user.id,
+          adSoyad: '',
+          unvan: '',
+          birim: '',
+          rol: 'Gönüllü',
+          onay: 'bekliyor',
+          ilceYoneticisi: false);
     }
   }
 }

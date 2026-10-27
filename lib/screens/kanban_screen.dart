@@ -37,7 +37,6 @@ class _KanbanScreenState extends State<KanbanScreen> {
           .eq('kategori', komisyonKategorisi)
           .order('sira');
 
-      // BAŞKANLARI BURADAN YATAY FİLTRE İÇİN GİZLİYORUZ
       k = d
           .map<String>((b) => b['ad'].toString())
           .where((ad) => !ad.contains('Başkan'))
@@ -76,10 +75,14 @@ class _KanbanScreenState extends State<KanbanScreen> {
           .order('ad'));
       final d = await supabase
           .from('faaliyetler')
-          .select('id, baslik, hedef_birim, hedef_birim_id, bagli_faaliyet_id')
+          .select(
+              'id, baslik, hedef_birim, hedef_birim_id, bagli_faaliyet_id, onay_durumu')
           .order('created_at', ascending: false);
+
+      // SADECE ONAYLI ANA FAALİYETLERE ALT GÖREV EKLENEBİLİR
       anaFaaliyetler = List<Map<String, dynamic>>.from(d)
-          .where((f) => f['bagli_faaliyet_id'] == null)
+          .where((f) =>
+              f['bagli_faaliyet_id'] == null && f['onay_durumu'] != 'Bekliyor')
           .toList();
     } catch (e) {
       debugPrint('Alt görev verileri alınamadı: $e');
@@ -88,7 +91,7 @@ class _KanbanScreenState extends State<KanbanScreen> {
     }
     if (!mounted) return;
     if (anaFaaliyetler.isEmpty) {
-      bildir(context, 'Önce takvimden ana bir faaliyet eklemelisiniz!',
+      bildir(context, 'Önce takvimden onaylı ana bir faaliyet eklemelisiniz!',
           renk: Colors.orange);
       return;
     }
@@ -290,6 +293,8 @@ class _KanbanScreenState extends State<KanbanScreen> {
                           if (mevcut == null) {
                             veri['atayan_ad'] = yetki.atayanEtiketi;
                             veri['kategori'] = 'Alt Görev';
+                            // Alt görevler direkt onaylıdır
+                            veri['onay_durumu'] = 'Onaylandı';
                           }
 
                           setM(() => kaydediliyor = true);
@@ -563,7 +568,11 @@ class _KanbanScreenState extends State<KanbanScreen> {
                       child:
                           CircularProgressIndicator(color: AppColors.accent));
                 }
-                var hepsi = snapshot.data!;
+                // ONAY BEKLEYENLERİ KANBANDAN GİZLİYORUZ
+                var hepsi = snapshot.data!
+                    .where((f) => f['onay_durumu'] != 'Bekliyor')
+                    .toList();
+
                 if (_komisyon != 'Tümü') {
                   hepsi = hepsi
                       .where((f) => f['hedef_birim'] == _komisyon)

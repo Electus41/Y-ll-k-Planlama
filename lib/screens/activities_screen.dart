@@ -12,6 +12,8 @@ import 'notes_screen.dart';
 import 'pdf_screen.dart';
 import 'profile_screen.dart';
 import 'units_screen.dart';
+import 'uye_yonetimi_screen.dart';
+import 'pending_approvals_screen.dart';
 
 class ActivitiesScreen extends StatefulWidget {
   const ActivitiesScreen({super.key});
@@ -22,6 +24,7 @@ class ActivitiesScreen extends StatefulWidget {
 
 class _ActivitiesScreenState extends State<ActivitiesScreen> {
   String _filtre = 'Tümü';
+  String _ilceFiltre = 'tum';
   Yetki? _yetki;
   bool _yukleniyor = true;
   late final Stream<List<Map<String, dynamic>>> _stream;
@@ -44,11 +47,18 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
     });
   }
 
+  bool _ilceUygun(Map<String, dynamic> f) {
+    if (_ilceFiltre == 'tum') return true;
+    final i = f['ilce_id']?.toString();
+    return _ilceFiltre == 'il' ? i == null : i == _ilceFiltre;
+  }
+
   void _whatsappOzetKopyala(List<Map<String, dynamic>> faaliyetler) {
     String metin = '📌 *KOCAELİ GENÇ İHH YILLIK PLAN*\n\n';
     for (final f in faaliyetler) {
       metin += '🔹 *${f['baslik']}*\n'
           '📅 ${tarihGoster(f['tarih']?.toString())}\n'
+          '🗺️ ${Ilceler.ad(f['ilce_id'])}\n'
           '📌 Durum: ${f['durum']}\n'
           '🏢 Sorumlu Birim: ${f['olusturan_unvan']}\n'
           '🎯 Hedef: ${f['hedef_birim']}\n'
@@ -61,6 +71,65 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
   void _git(Widget ekran) =>
       Navigator.push(context, MaterialPageRoute(builder: (_) => ekran));
 
+  Widget _onayBandi() {
+    final reddedildi = _yetki?.onay == 'reddedildi';
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+          color: (reddedildi ? Colors.redAccent : Colors.orangeAccent)
+              .withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+              color: (reddedildi ? Colors.redAccent : Colors.orangeAccent)
+                  .withValues(alpha: 0.5))),
+      child: Row(
+        children: [
+          Icon(reddedildi ? Icons.block : Icons.hourglass_top,
+              color: reddedildi ? Colors.redAccent : Colors.orangeAccent),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+                reddedildi
+                    ? 'Başvurunuz reddedildi. Lütfen yöneticinizle iletişime geçin.'
+                    : 'Hesabınız onay bekliyor. Yöneticiniz birim ve yetkinizi atadığında tüm özellikler açılacak.',
+                style: const TextStyle(color: Colors.white, fontSize: 13)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _ilceDropdown() {
+    final secenekler = <MapEntry<String, String>>[
+      const MapEntry('tum', 'Tüm Teşkilat'),
+      const MapEntry('il', 'İl (Merkez)'),
+      ...Ilceler.liste
+          .map((i) => MapEntry(i['id'].toString(), i['ad'].toString())),
+    ];
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: DropdownButtonFormField<String>(
+        value: _ilceFiltre,
+        isExpanded: true,
+        dropdownColor: AppColors.inputFill,
+        style: const TextStyle(color: Colors.white),
+        decoration: koyuInput(
+            label: 'İlçe / Teşkilat Filtresi', icon: Icons.location_city),
+        items: secenekler.map((e) {
+          return DropdownMenuItem<String>(
+            value: e.key,
+            child: Text(e.value),
+          );
+        }).toList(),
+        onChanged: (v) {
+          if (v != null) setState(() => _ilceFiltre = v);
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_yukleniyor) {
@@ -69,7 +138,9 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
           body: Center(
               child: CircularProgressIndicator(color: AppColors.accent)));
     }
-    final yazabilir = _yetki?.yazabilir ?? false;
+    final yetki = _yetki;
+    final yazabilir = yetki?.yazabilir ?? false;
+    final yonetim = (yetki?.admin ?? false) || (yetki?.ilceAdmini ?? false);
 
     return Scaffold(
       backgroundColor: AppColors.secondary,
@@ -123,7 +194,9 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                 child: CircularProgressIndicator(color: AppColors.accent));
           }
 
-          final faaliyetler = snapshot.data ?? <Map<String, dynamic>>[];
+          final faaliyetler = (snapshot.data ?? <Map<String, dynamic>>[])
+              .where((f) => _ilceUygun(f) && f['onay_durumu'] != 'Bekliyor')
+              .toList();
           int say(String d) => faaliyetler.where((f) => f['durum'] == d).length;
 
           var liste = faaliyetler;
@@ -137,6 +210,7 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (yetki != null && yetki.bekliyor) _onayBandi(),
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
@@ -186,6 +260,22 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                         fontWeight: FontWeight.bold,
                         color: Colors.white)),
                 const SizedBox(height: 12),
+                if (yonetim) ...[
+                  _modulSatiri(
+                      'Onay Bekleyenler',
+                      'Eklenen yeni faaliyetleri onaylayın veya reddedin',
+                      Icons.verified_user,
+                      Colors.amberAccent,
+                      () => _git(const PendingApprovalsScreen())),
+                  const SizedBox(height: 10),
+                  _modulSatiri(
+                      'Üye Onayları & Yönetim',
+                      'Yeni üyeleri onaylayın, birim ve yetki atayın',
+                      Icons.how_to_reg,
+                      Colors.amberAccent,
+                      () => _git(const UyeYonetimiScreen())),
+                  const SizedBox(height: 10),
+                ],
                 if (yazabilir) ...[
                   _modulSatiri(
                       'Yeni Faaliyet Ekle',
@@ -244,7 +334,8 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                         style: const TextStyle(color: Colors.white70)),
                   ],
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 12),
+                if (yetki?.admin ?? false) _ilceDropdown(),
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
@@ -276,7 +367,7 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                 else
                   ...liste.map((f) => FaaliyetKarti(
                         f: f,
-                        yetki: _yetki,
+                        yetki: yetki,
                         onTap: () => _git(FaaliyetDetayScreen(
                             faaliyetId: f['id'].toString())),
                         onDuzenle: () => faaliyetFormuAc(context, mevcut: f),

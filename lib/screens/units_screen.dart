@@ -6,17 +6,27 @@ import '../widgets/faaliyet_form_dialog.dart';
 import '../widgets/faaliyet_karti.dart';
 import 'faaliyet_detay_screen.dart';
 
-/// Faaliyet bu birimle eşleşiyor mu? (id varsa id'ye, yoksa eski ad kaydına bakar)
 bool birimEslesir(Map<String, dynamic> f, Map<String, dynamic> b,
     {required bool hedef}) {
   final id = b['id'].toString();
-  final ad = b['ad'];
+  final ad = b['ad'].toString();
+  final temizAd = b['temiz_ad']?.toString() ?? ad;
+
+  final fi = f['ilce_id']?.toString();
+  final bi = b['ilce_id']?.toString();
+
   if (hedef) {
-    final h = f['hedef_birim_id'];
-    return h != null ? h.toString() == id : f['hedef_birim'] == ad;
+    final hId = f['hedef_birim_id']?.toString();
+    final hAd = f['hedef_birim']?.toString();
+    return hId == id ||
+        (fi == bi &&
+            (hAd == ad || hAd == temizAd || hAd == '$temizAd Başkanı'));
   }
-  final s = f['sorumlu_birim_id'];
-  return s != null ? s.toString() == id : f['olusturan_unvan'] == ad;
+
+  final sId = f['sorumlu_birim_id']?.toString();
+  final sAd = f['olusturan_unvan']?.toString();
+  return sId == id ||
+      (fi == bi && (sAd == ad || sAd == temizAd || sAd == '$temizAd Başkanı'));
 }
 
 class UnitsScreen extends StatefulWidget {
@@ -30,6 +40,7 @@ class _UnitsScreenState extends State<UnitsScreen> {
   late final Stream<List<Map<String, dynamic>>> _birimStream;
   late final Stream<List<Map<String, dynamic>>> _faaliyetStream;
   Yetki? _yetki;
+  String? _ilceId;
   String _arama = '';
 
   @override
@@ -39,7 +50,12 @@ class _UnitsScreenState extends State<UnitsScreen> {
         supabase.from('birimler').stream(primaryKey: ['id']).order('sira');
     _faaliyetStream = supabase.from('faaliyetler').stream(primaryKey: ['id']);
     Yetki.yukle().then((y) {
-      if (mounted) setState(() => _yetki = y);
+      if (mounted) {
+        setState(() {
+          _yetki = y;
+          _ilceId = y?.ilceId;
+        });
+      }
     });
   }
 
@@ -59,6 +75,27 @@ class _UnitsScreenState extends State<UnitsScreen> {
               style: TextStyle(
                   color: renk, fontWeight: FontWeight.bold, fontSize: 12)),
         ]),
+      ),
+    );
+  }
+
+  Widget _ilceSecici() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: DropdownButtonFormField<String?>(
+        value: _ilceId,
+        isExpanded: true,
+        dropdownColor: AppColors.inputFill,
+        style: const TextStyle(color: Colors.white),
+        decoration: koyuInput(
+            label: 'İlçe / Teşkilat Filtresi', icon: Icons.location_city),
+        items: [
+          const DropdownMenuItem<String?>(
+              value: null, child: Text('İl (Merkez)')),
+          ...Ilceler.liste.map((i) => DropdownMenuItem<String?>(
+              value: i['id'].toString(), child: Text(i['ad'].toString()))),
+        ],
+        onChanged: (v) => setState(() => _ilceId = v),
       ),
     );
   }
@@ -97,10 +134,33 @@ class _UnitsScreenState extends State<UnitsScreen> {
                 child: CircularProgressIndicator(color: AppColors.accent));
           }
 
-          // BAŞKANLARI BURADAN FİLTRELİYORUZ
-          final birimler = birimSnap.data!
-              .where((b) => !b['ad'].toString().contains('Başkan'))
-              .toList();
+          final hamBirimler = birimSnap.data!.where((b) {
+            final ad = b['ad'].toString().toLowerCase();
+            if (ad.contains('ilkokul')) return false; // İlkokulu tamamen gizle
+            return b['ilce_id']?.toString() == _ilceId;
+          }).toList();
+
+          final zirhliListe = <String, Map<String, dynamic>>{};
+          for (final b in hamBirimler) {
+            final id = b['id']?.toString();
+            String ad = b['ad']?.toString().trim() ?? '';
+
+            if (ad != 'İlçe Başkanı' && !ad.contains('Teşkilatlanma')) {
+              if (ad.endsWith(' Başkanı')) {
+                ad = ad.replaceAll(' Başkanı', '').trim();
+              }
+            }
+
+            if (id != null && ad.isNotEmpty) {
+              if (!zirhliListe.values.any((item) => item['temiz_ad'] == ad)) {
+                zirhliListe[id] = {...b, 'temiz_ad': ad};
+              }
+            }
+          }
+
+          final birimler = zirhliListe.values.toList();
+          birimler.sort((a, b) =>
+              a['temiz_ad'].toString().compareTo(b['temiz_ad'].toString()));
 
           return StreamBuilder<List<Map<String, dynamic>>>(
             stream: _faaliyetStream,
@@ -109,10 +169,13 @@ class _UnitsScreenState extends State<UnitsScreen> {
                 return const Center(
                     child: CircularProgressIndicator(color: AppColors.accent));
               }
-              final faaliyetler = faalSnap.data!;
+              final faaliyetler = faalSnap.data!
+                  .where((f) => f['onay_durumu'] != 'Bekliyor')
+                  .toList();
 
               return Column(
                 children: [
+                  if (_yetki?.admin ?? false) _ilceSecici(),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                     child: TextField(
@@ -130,7 +193,7 @@ class _UnitsScreenState extends State<UnitsScreen> {
                         final liste = birimler
                             .where((b) =>
                                 b['kategori'] == kategori &&
-                                b['ad']
+                                b['temiz_ad']
                                     .toString()
                                     .toLowerCase()
                                     .contains(_arama))
@@ -142,6 +205,7 @@ class _UnitsScreenState extends State<UnitsScreen> {
                           data: Theme.of(context)
                               .copyWith(dividerColor: Colors.transparent),
                           child: ExpansionTile(
+                            key: PageStorageKey('${kategori}_$_ilceId'),
                             title: Text(kategori,
                                 style: const TextStyle(
                                     color: AppColors.accent,
@@ -169,7 +233,7 @@ class _UnitsScreenState extends State<UnitsScreen> {
                                 child: ListTile(
                                   contentPadding: const EdgeInsets.symmetric(
                                       horizontal: 16, vertical: 8),
-                                  title: Text(birim['ad'].toString(),
+                                  title: Text(birim['temiz_ad'].toString(),
                                       style: const TextStyle(
                                           color: Colors.white,
                                           fontWeight: FontWeight.bold)),
@@ -221,7 +285,6 @@ class _UnitsScreenState extends State<UnitsScreen> {
   }
 }
 
-// ======================= BİRİM DETAY =======================
 class BirimDetayScreen extends StatefulWidget {
   final Map<String, dynamic> birim;
   const BirimDetayScreen({super.key, required this.birim});
@@ -254,7 +317,7 @@ class _BirimDetayScreenState extends State<BirimDetayScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: Text(birim['ad'].toString(),
+        title: Text('${birim['temiz_ad']} • ${Ilceler.ad(birim['ilce_id'])}',
             style: const TextStyle(color: Colors.white, fontSize: 16)),
         backgroundColor: AppColors.secondary,
         iconTheme: const IconThemeData(color: Colors.white),
@@ -315,7 +378,9 @@ class _BirimDetayScreenState extends State<BirimDetayScreen> {
                           CircularProgressIndicator(color: AppColors.accent));
                 }
                 var liste = snap.data!
-                    .where((f) => birimEslesir(f, birim, hedef: _hedefGorunum))
+                    .where((f) =>
+                        f['onay_durumu'] != 'Bekliyor' &&
+                        birimEslesir(f, birim, hedef: _hedefGorunum))
                     .toList();
                 if (_durumFiltresi != 'Tümü') {
                   liste =
@@ -355,7 +420,6 @@ class _BirimDetayScreenState extends State<BirimDetayScreen> {
   }
 }
 
-// ======================= BİRİM YÖNETİMİ (sadece admin) =======================
 class BirimYonetimiScreen extends StatefulWidget {
   const BirimYonetimiScreen({super.key});
 
@@ -365,12 +429,29 @@ class BirimYonetimiScreen extends StatefulWidget {
 
 class _BirimYonetimiScreenState extends State<BirimYonetimiScreen> {
   late final Stream<List<Map<String, dynamic>>> _stream;
+  String? _ilceId;
 
   @override
   void initState() {
     super.initState();
     _stream =
         supabase.from('birimler').stream(primaryKey: ['id']).order('sira');
+  }
+
+  Future<void> _sablonuYay() async {
+    final onay = await onayDialogu(context,
+        baslik: 'Şablonu İlçelere Yay',
+        mesaj:
+            'İl düzeyindeki birim ve komisyonlardan, bir ilçede eksik olanlar tüm ilçelere eklenecek. Mevcut olanlara dokunulmaz.',
+        onayMetni: 'Yay');
+    if (!onay) return;
+    try {
+      final sonuc = await supabase.rpc('ilce_sablonu_yay');
+      if (mounted) bildir(context, '$sonuc yeni birim ilçelere eklendi.');
+    } catch (e) {
+      debugPrint('Şablon yayılamadı: $e');
+      if (mounted) bildir(context, 'İşlem yapılamadı.', renk: Colors.red);
+    }
   }
 
   Future<void> _modalAc({Map<String, dynamic>? mevcut}) async {
@@ -392,6 +473,14 @@ class _BirimYonetimiScreenState extends State<BirimYonetimiScreen> {
               style: const TextStyle(color: Colors.white, fontSize: 17)),
           content: SingleChildScrollView(
             child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                    'Teşkilat: ${Ilceler.ad(mevcut == null ? _ilceId : mevcut['ilce_id'])}',
+                    style: const TextStyle(
+                        color: Colors.orangeAccent, fontSize: 12)),
+              ),
+              const SizedBox(height: 10),
               TextField(
                   controller: adCtrl,
                   style: const TextStyle(color: Colors.white),
@@ -452,29 +541,15 @@ class _BirimYonetimiScreenState extends State<BirimYonetimiScreen> {
 
     try {
       if (mevcut == null) {
-        await supabase.from('birimler').insert(veri);
+        await supabase.from('birimler').insert({...veri, 'ilce_id': _ilceId});
       } else {
         await supabase.from('birimler').update(veri).eq('id', mevcut['id']);
-        final eskiAd = mevcut['ad'].toString();
-        if (eskiAd != yeniAd) {
-          // Ad değiştiyse metin olarak saklanan kayıtları da güncelle
-          await supabase.from('faaliyetler').update({'hedef_birim': yeniAd}).eq(
-              'hedef_birim_id', mevcut['id']);
-          await supabase.from('faaliyetler').update(
-              {'olusturan_unvan': yeniAd}).eq('sorumlu_birim_id', mevcut['id']);
-          for (final t in [
-            ['profiller', 'bagli_birim'],
-            ['profiller', 'unvan'],
-            ['toplanti_notlari', 'olusturan_birim'],
-          ]) {
-            await supabase.from(t[0]).update({t[1]: yeniAd}).eq(t[1], eskiAd);
-          }
-        }
       }
     } catch (e) {
       debugPrint('Birim kaydedilemedi: $e');
       if (mounted) {
-        bildir(context, 'Birim kaydedilemedi. Yetkiniz olmayabilir.',
+        bildir(context,
+            'Birim kaydedilemedi. Aynı ilçede aynı ad olabilir veya yetkiniz yok.',
             renk: Colors.red);
       }
     }
@@ -482,15 +557,20 @@ class _BirimYonetimiScreenState extends State<BirimYonetimiScreen> {
 
   Future<void> _sil(Map<String, dynamic> b) async {
     try {
-      final kullanan = await supabase
+      final faal = await supabase
           .from('faaliyetler')
           .select('id')
           .or('hedef_birim_id.eq.${b['id']},sorumlu_birim_id.eq.${b['id']}')
           .limit(1);
-      if (kullanan.isNotEmpty) {
+      final uye = await supabase
+          .from('profiller')
+          .select('id')
+          .eq('birim_id', b['id'])
+          .limit(1);
+      if (faal.isNotEmpty || uye.isNotEmpty) {
         if (mounted) {
           bildir(context,
-              'Bu birime bağlı faaliyetler var. Önce onları başka birime taşıyın.',
+              'Bu birime bağlı faaliyet veya üye var. Önce onları başka birime taşıyın.',
               renk: Colors.orange);
         }
         return;
@@ -515,6 +595,12 @@ class _BirimYonetimiScreenState extends State<BirimYonetimiScreen> {
             style: TextStyle(color: Colors.white, fontSize: 16)),
         backgroundColor: AppColors.secondary,
         iconTheme: const IconThemeData(color: Colors.white),
+        actions: [
+          IconButton(
+              icon: const Icon(Icons.account_tree),
+              tooltip: 'Şablonu ilçelere yay',
+              onPressed: _sablonuYay),
+        ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: AppColors.accent,
@@ -524,50 +610,90 @@ class _BirimYonetimiScreenState extends State<BirimYonetimiScreen> {
         label: const Text('Yeni Birim',
             style: TextStyle(fontWeight: FontWeight.bold)),
       ),
-      body: StreamBuilder<List<Map<String, dynamic>>>(
-        stream: _stream,
-        builder: (context, snap) {
-          if (!snap.hasData) {
-            return const Center(
-                child: CircularProgressIndicator(color: AppColors.accent));
-          }
-          final birimler = snap.data!;
-          return ListView.builder(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 90),
-            itemCount: birimler.length,
-            itemBuilder: (context, i) {
-              final b = birimler[i];
-              return Card(
-                color: AppColors.card,
-                margin: const EdgeInsets.only(bottom: 10),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    side: const BorderSide(color: Colors.white12)),
-                child: ListTile(
-                  title: Text(b['ad'].toString(),
-                      style: const TextStyle(
-                          color: Colors.white, fontWeight: FontWeight.bold)),
-                  subtitle: Text(
-                      [b['kategori'], b['aciklama']]
-                          .where((e) => e != null && e.toString().isNotEmpty)
-                          .join(' • '),
-                      style: const TextStyle(
-                          color: Colors.orangeAccent, fontSize: 12)),
-                  trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                    IconButton(
-                        icon: const Icon(Icons.edit,
-                            color: Colors.blueAccent, size: 20),
-                        onPressed: () => _modalAc(mevcut: b)),
-                    IconButton(
-                        icon: const Icon(Icons.delete,
-                            color: Colors.redAccent, size: 20),
-                        onPressed: () => _sil(b)),
-                  ]),
-                ),
-              );
-            },
-          );
-        },
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: DropdownButtonFormField<String>(
+              initialValue: _ilceId ?? 'il',
+              isExpanded: true,
+              dropdownColor: AppColors.inputFill,
+              style: const TextStyle(color: Colors.white),
+              decoration:
+                  koyuInput(label: 'Teşkilat', icon: Icons.location_city),
+              items: [
+                const DropdownMenuItem(
+                    value: 'il', child: Text('İl (Merkez) - ŞABLON')),
+                ...Ilceler.liste.map((i) => DropdownMenuItem(
+                    value: i['id'].toString(),
+                    child: Text(i['ad'].toString()))),
+              ],
+              onChanged: (v) => setState(() => _ilceId = v == 'il' ? null : v),
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Text(
+                'İl düzeyi birimler şablondur. Yeni şablon birimi ekledikten sonra sağ üstteki ağaç simgesiyle ilçelere yayın.',
+                style: TextStyle(color: Colors.white38, fontSize: 11)),
+          ),
+          Expanded(
+            child: StreamBuilder<List<Map<String, dynamic>>>(
+              stream: _stream,
+              builder: (context, snap) {
+                if (!snap.hasData) {
+                  return const Center(
+                      child:
+                          CircularProgressIndicator(color: AppColors.accent));
+                }
+                final birimler = snap.data!.where((b) {
+                  if (b['ad'].toString().toLowerCase().contains('ilkokul'))
+                    return false; // İlkokulu gizle
+                  return b['ilce_id']?.toString() == _ilceId;
+                }).toList();
+
+                return ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 90),
+                  itemCount: birimler.length,
+                  itemBuilder: (context, i) {
+                    final b = birimler[i];
+                    return Card(
+                      color: AppColors.card,
+                      margin: const EdgeInsets.only(bottom: 10),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          side: const BorderSide(color: Colors.white12)),
+                      child: ListTile(
+                        title: Text(b['ad'].toString(),
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold)),
+                        subtitle: Text(
+                            [b['kategori'], b['aciklama']]
+                                .where(
+                                    (e) => e != null && e.toString().isNotEmpty)
+                                .join(' • '),
+                            style: const TextStyle(
+                                color: Colors.orangeAccent, fontSize: 12)),
+                        trailing:
+                            Row(mainAxisSize: MainAxisSize.min, children: [
+                          IconButton(
+                              icon: const Icon(Icons.edit,
+                                  color: Colors.blueAccent, size: 20),
+                              onPressed: () => _modalAc(mevcut: b)),
+                          IconButton(
+                              icon: const Icon(Icons.delete,
+                                  color: Colors.redAccent, size: 20),
+                              onPressed: () => _sil(b)),
+                        ]),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

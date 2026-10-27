@@ -4,7 +4,6 @@ import '../core/constants.dart';
 import '../core/faaliyet_servisi.dart';
 import '../core/ortak.dart';
 
-/// Faaliyet ekleme/düzenleme formu. Kaydedildiyse true döner.
 Future<bool> faaliyetFormuAc(BuildContext context,
     {Map<String, dynamic>? mevcut, String? varsayilanHedefId}) async {
   final yetki = await Yetki.yukle();
@@ -20,11 +19,11 @@ Future<bool> faaliyetFormuAc(BuildContext context,
   try {
     kisiler = List<Map<String, dynamic>>.from(await supabase
         .from('profiller')
-        .select('id, ad, soyad, unvan')
+        .select('id, ad, soyad, unvan, ilce_id, onay_durumu')
         .order('ad'));
     birimler = List<Map<String, dynamic>>.from(await supabase
         .from('birimler')
-        .select('id, ad, kategori')
+        .select('id, ad, kategori, ilce_id')
         .order('sira'));
   } catch (e) {
     debugPrint('Form listeleri yüklenemedi: $e');
@@ -73,23 +72,38 @@ class _FaaliyetFormuState extends State<_FaaliyetFormu> {
   late DateTime _bas;
   late DateTime _bit;
   bool _aralik = false;
+  String? _ilceId;
   String? _sorumluId, _hedefId, _kisiId;
   String _durum = 'Yapılacak';
   String _oncelik = 'Normal';
   bool _kaydediliyor = false;
 
-  // Sorumlu Birimde sadece İcra ve Yönetim (Başkanlar Hariç)
-  List<Map<String, dynamic>> get _sorumluListesi => widget.birimler
-      .where((b) =>
-          b['kategori'] != komisyonKategorisi &&
-          !b['ad'].toString().contains('Başkan'))
-      .toList();
+  bool get _secebilir => widget.yetki.admin || widget.yetki.ilceAdmini;
 
-  // Hedef Komisyonda sadece Komisyonlar (Başkanlar Hariç)
-  List<Map<String, dynamic>> get _komisyonListesi => widget.birimler
-      .where((b) =>
-          b['kategori'] == komisyonKategorisi &&
-          !b['ad'].toString().contains('Başkan'))
+  bool _ilceUygun(Map<String, dynamic> b) {
+    final ad = b['ad'].toString().toLowerCase();
+    if (ad.contains('ilkokul')) return false;
+    return b['ilce_id']?.toString() == _ilceId;
+  }
+
+  List<Map<String, dynamic>> get _sorumluListesi {
+    final l = widget.birimler
+        .where((b) => _ilceUygun(b) && b['kategori'] != komisyonKategorisi);
+    final sn = <String>{};
+    return l.where((b) => sn.add(b['ad'].toString())).toList();
+  }
+
+  List<Map<String, dynamic>> get _komisyonListesi {
+    final l = widget.birimler
+        .where((b) => _ilceUygun(b) && b['kategori'] == komisyonKategorisi);
+    final sn = <String>{};
+    return l.where((b) => sn.add(b['ad'].toString())).toList();
+  }
+
+  List<Map<String, dynamic>> get _kisiListesi => widget.kisiler
+      .where((k) =>
+          k['ilce_id']?.toString() == _ilceId &&
+          k['onay_durumu'] == 'onaylandı')
       .toList();
 
   Map<String, dynamic>? _birimBul(String? id) {
@@ -113,6 +127,18 @@ class _FaaliyetFormuState extends State<_FaaliyetFormu> {
     return null;
   }
 
+  String? _ilceBaslangic() {
+    final m = widget.mevcut;
+    if (m != null) return m['ilce_id']?.toString();
+    if (!widget.yetki.admin) return widget.yetki.ilceId;
+    final v = widget.varsayilanHedefId;
+    if (v != null) {
+      final b = _birimBul(v);
+      if (b != null) return b['ilce_id']?.toString();
+    }
+    return null;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -132,23 +158,34 @@ class _FaaliyetFormuState extends State<_FaaliyetFormu> {
     final o = m?['oncelik']?.toString();
     if (o != null && oncelikler.contains(o)) _oncelik = o;
 
+    _ilceId = _ilceBaslangic();
+
     _sorumluId = _idGecerli(_sorumluListesi, m?['sorumlu_birim_id']) ??
         _adlaBul(_sorumluListesi, m?['olusturan_unvan']);
-    if (_sorumluId == null && m == null && !widget.yetki.admin) {
-      _sorumluId = _adlaBul(_sorumluListesi, widget.yetki.birim) ??
-          _adlaBul(_sorumluListesi, widget.yetki.unvan);
+    if (_sorumluId == null && m == null && !_secebilir) {
+      _sorumluId = _idGecerli(_sorumluListesi, widget.yetki.birimId) ??
+          _adlaBul(_sorumluListesi, widget.yetki.birimAdi);
     }
     _hedefId = _idGecerli(_komisyonListesi, m?['hedef_birim_id']) ??
         _adlaBul(_komisyonListesi, m?['hedef_birim']) ??
         _idGecerli(_komisyonListesi, widget.varsayilanHedefId);
     final ak = m?['atanan_kisi_id']?.toString();
-    _kisiId = widget.kisiler.any((k) => k['id'].toString() == ak) ? ak : null;
+    _kisiId = _kisiListesi.any((k) => k['id'].toString() == ak) ? ak : null;
   }
 
   @override
   void dispose() {
     _baslik.dispose();
     super.dispose();
+  }
+
+  void _ilceDegisti(String? v) {
+    setState(() {
+      _ilceId = v == 'il' ? null : v;
+      _sorumluId = null;
+      _hedefId = null;
+      _kisiId = null;
+    });
   }
 
   Widget _temali(BuildContext c, Widget? child) => Theme(
@@ -206,7 +243,7 @@ class _FaaliyetFormuState extends State<_FaaliyetFormu> {
       bildir(context, 'Lütfen Hedef Komisyon seçiniz!', renk: Colors.orange);
       return;
     }
-    if (widget.yetki.admin && _sorumluId == null) {
+    if (_secebilir && _sorumluId == null) {
       bildir(context, 'Lütfen Sorumlu Birim seçiniz!', renk: Colors.orange);
       return;
     }
@@ -235,10 +272,18 @@ class _FaaliyetFormuState extends State<_FaaliyetFormu> {
       'hedef_birim': hedef['ad'],
       'sorumlu_birim_id': sorumlu?['id'],
       'olusturan_unvan': sorumluAd,
+      'ilce_id': _ilceId,
     };
+
+    // ONAY DURUMU YÖNETİMİ
     if (widget.mevcut == null) {
       veri['atayan_ad'] = widget.yetki.atayanEtiketi;
       veri['kategori'] = 'Genel';
+      veri['onay_durumu'] = _secebilir ? 'Onaylandı' : 'Bekliyor';
+    } else {
+      if (!_secebilir) {
+        veri['onay_durumu'] = 'Bekliyor';
+      }
     }
 
     setState(() => _kaydediliyor = true);
@@ -246,6 +291,11 @@ class _FaaliyetFormuState extends State<_FaaliyetFormu> {
         mevcut: widget.mevcut, veri: veri);
     if (!mounted) return;
     if (ok) {
+      if (!_secebilir && veri['onay_durumu'] == 'Bekliyor') {
+        bildir(context,
+            'Kayıt başarılı. Yöneticilerin onayı sonrasında listelenecektir.',
+            renk: Colors.blueAccent);
+      }
       Navigator.pop(context, true);
     } else {
       setState(() => _kaydediliyor = false);
@@ -253,19 +303,40 @@ class _FaaliyetFormuState extends State<_FaaliyetFormu> {
   }
 
   Widget _birimDropdown({
+    required String anahtar,
     required String label,
     required IconData icon,
     required List<Map<String, dynamic>> liste,
     required String? deger,
     required ValueChanged<String?> onChanged,
   }) {
+    // Çökme Koruması: Listeyi benzersiz hale getir (Aynı isimli olanları temizle)
+    final zirhliListe = <String, Map<String, dynamic>>{};
+    for (final b in liste) {
+      final id = b['id']?.toString();
+      final ad = b['ad']?.toString();
+      if (id != null && ad != null) {
+        if (!zirhliListe.values.any((item) => item['ad'] == ad)) {
+          zirhliListe[id] = b;
+        }
+      }
+    }
+    final temizListe = zirhliListe.values.toList();
+
+    // Çökme Koruması 2: Değer listede yoksa null olarak kabul et
+    String? guvenliDeger = deger;
+    if (guvenliDeger != null && !zirhliListe.containsKey(guvenliDeger)) {
+      guvenliDeger = null;
+    }
+
     return DropdownButtonFormField<String>(
-      initialValue: deger,
+      key: ValueKey('${anahtar}_$_ilceId'),
+      initialValue: guvenliDeger,
       isExpanded: true,
       dropdownColor: AppColors.inputFill,
       style: const TextStyle(color: Colors.white),
       decoration: koyuInput(label: label, icon: icon),
-      items: liste
+      items: temizListe
           .map((b) => DropdownMenuItem<String>(
               value: b['id'].toString(),
               child: Text(b['ad'].toString(), overflow: TextOverflow.ellipsis)))
@@ -273,6 +344,24 @@ class _FaaliyetFormuState extends State<_FaaliyetFormu> {
       onChanged: onChanged,
     );
   }
+
+  Widget _kilitli(IconData ikon, String metin) => Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+            color: AppColors.inputFill,
+            borderRadius: BorderRadius.circular(10)),
+        child: Row(
+          children: [
+            Icon(ikon,
+                color: Colors.tealAccent.withValues(alpha: 0.7), size: 20),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Text(metin,
+                  style: const TextStyle(color: Colors.white70, fontSize: 14)),
+            ),
+          ],
+        ),
+      );
 
   Widget _tarihKutusu() {
     final metin =
@@ -302,7 +391,6 @@ class _FaaliyetFormuState extends State<_FaaliyetFormu> {
   @override
   Widget build(BuildContext context) {
     final guncelleme = widget.mevcut != null;
-    final admin = widget.yetki.admin;
     final kilitliBirim =
         _birimBul(_sorumluId)?['ad']?.toString() ?? widget.yetki.birimAdi;
 
@@ -341,8 +429,29 @@ class _FaaliyetFormuState extends State<_FaaliyetFormu> {
                   koyuInput(label: 'Faaliyet Adı', icon: Icons.description),
             ),
             const SizedBox(height: 16),
-            if (admin)
+            if (widget.yetki.admin)
+              DropdownButtonFormField<String>(
+                initialValue: _ilceId ?? 'il',
+                isExpanded: true,
+                dropdownColor: AppColors.inputFill,
+                style: const TextStyle(color: Colors.white),
+                decoration: koyuInput(
+                    label: 'İlçe / Teşkilat', icon: Icons.location_city),
+                items: [
+                  const DropdownMenuItem(
+                      value: 'il', child: Text('İl (Merkez)')),
+                  ...Ilceler.liste.map((i) => DropdownMenuItem(
+                      value: i['id'].toString(),
+                      child: Text(i['ad'].toString()))),
+                ],
+                onChanged: _ilceDegisti,
+              )
+            else
+              _kilitli(Icons.location_city, 'İlçe: ${Ilceler.ad(_ilceId)}'),
+            const SizedBox(height: 16),
+            if (_secebilir)
               _birimDropdown(
+                anahtar: 'sorumlu',
                 label: 'Sorumlu Birim (Görevlendirilen)',
                 icon: Icons.account_balance,
                 liste: _sorumluListesi,
@@ -350,27 +459,10 @@ class _FaaliyetFormuState extends State<_FaaliyetFormu> {
                 onChanged: (v) => setState(() => _sorumluId = v),
               )
             else
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                    color: AppColors.inputFill,
-                    borderRadius: BorderRadius.circular(10)),
-                child: Row(
-                  children: [
-                    Icon(Icons.lock,
-                        color: Colors.tealAccent.withValues(alpha: 0.7),
-                        size: 20),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Text('Sorumlu Birim: $kilitliBirim',
-                          style: const TextStyle(
-                              color: Colors.white70, fontSize: 14)),
-                    ),
-                  ],
-                ),
-              ),
+              _kilitli(Icons.lock, 'Sorumlu Birim: $kilitliBirim'),
             const SizedBox(height: 16),
             _birimDropdown(
+              anahtar: 'hedef',
               label: 'Faaliyet Alanı / Hedef Komisyon',
               icon: Icons.groups,
               liste: _komisyonListesi,
@@ -378,12 +470,15 @@ class _FaaliyetFormuState extends State<_FaaliyetFormu> {
               onChanged: (v) => setState(() => _hedefId = v),
             ),
             const SizedBox(height: 16),
-            kisiDropdown(
-              kisiler: widget.kisiler,
-              deger: _kisiId,
-              etiketMetni: 'Özel Sorumlu Kişi (Bildirim Gider)',
-              bosMetin: 'Henüz Atanmadı',
-              onChanged: (v) => setState(() => _kisiId = v),
+            KeyedSubtree(
+              key: ValueKey('kisi_$_ilceId'),
+              child: kisiDropdown(
+                kisiler: _kisiListesi,
+                deger: _kisiId,
+                etiketMetni: 'Özel Sorumlu Kişi (Bildirim Gider)',
+                bosMetin: 'Henüz Atanmadı',
+                onChanged: (v) => setState(() => _kisiId = v),
+              ),
             ),
             const SizedBox(height: 12),
             SwitchListTile(
