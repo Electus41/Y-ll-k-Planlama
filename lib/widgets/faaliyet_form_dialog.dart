@@ -81,30 +81,64 @@ class _FaaliyetFormuState extends State<_FaaliyetFormu> {
   bool get _secebilir => widget.yetki.admin || widget.yetki.ilceAdmini;
 
   bool _ilceUygun(Map<String, dynamic> b) {
-    final ad = b['ad'].toString().toLowerCase();
-    if (ad.contains('ilkokul')) return false;
+    final ad = b['ad'].toString().trim();
+    final lowerAd = ad.toLowerCase();
+
+    // 1. İlkokulu kökten gizle
+    if (lowerAd.contains('ilkokul')) return false;
+
+    // 2. Şahsi makamlar ve üst düzey yönetimleri birim listesinden çıkar
+    if (lowerAd == 'il' ||
+        lowerAd == 'i̇l' ||
+        lowerAd.contains('gölge') ||
+        lowerAd.contains('teşkilatlanma')) return false;
+    if (ustUnvanlar.contains(ad)) return false;
+
+    // 3. Üniversite sadece İl'de görünür
+    if (_ilceId != null && lowerAd.contains('üniversite')) return false;
+
     return b['ilce_id']?.toString() == _ilceId;
   }
 
-  List<Map<String, dynamic>> get _sorumluListesi {
-    final l = widget.birimler
-        .where((b) => _ilceUygun(b) && b['kategori'] != komisyonKategorisi);
-    final sn = <String>{};
-    return l.where((b) => sn.add(b['ad'].toString())).toList();
+  List<Map<String, dynamic>> _listeTemizle(
+      Iterable<Map<String, dynamic>> hamListe) {
+    final zirhliListe = <String, Map<String, dynamic>>{};
+    for (final b in hamListe) {
+      final id = b['id']?.toString();
+      String ad = b['ad']?.toString().trim() ?? '';
+
+      // " Başkanı" ekini silerek birim adını sadeleştir
+      if (ad.endsWith(' Başkanı')) {
+        ad = ad.replaceAll(' Başkanı', '').trim();
+      }
+
+      if (id != null && ad.isNotEmpty) {
+        if (!zirhliListe.values.any((item) => item['temiz_ad'] == ad)) {
+          zirhliListe[id] = {...b, 'temiz_ad': ad};
+        }
+      }
+    }
+
+    final sonListe = zirhliListe.values.toList();
+    sonListe.sort(
+        (a, b) => a['temiz_ad'].toString().compareTo(b['temiz_ad'].toString()));
+    return sonListe;
   }
 
-  List<Map<String, dynamic>> get _komisyonListesi {
-    final l = widget.birimler
-        .where((b) => _ilceUygun(b) && b['kategori'] == komisyonKategorisi);
-    final sn = <String>{};
-    return l.where((b) => sn.add(b['ad'].toString())).toList();
-  }
+  List<Map<String, dynamic>> get _sorumluListesi =>
+      _listeTemizle(widget.birimler
+          .where((b) => _ilceUygun(b) && b['kategori'] != komisyonKategorisi));
 
-  List<Map<String, dynamic>> get _kisiListesi => widget.kisiler
-      .where((k) =>
-          k['ilce_id']?.toString() == _ilceId &&
-          k['onay_durumu'] == 'onaylandı')
-      .toList();
+  List<Map<String, dynamic>> get _komisyonListesi =>
+      _listeTemizle(widget.birimler
+          .where((b) => _ilceUygun(b) && b['kategori'] == komisyonKategorisi));
+
+  // Sadece seçili il/ilçeye ait ve onaylanmış üyeleri getir
+  List<Map<String, dynamic>> get _kisiListesi => widget.kisiler.where((k) {
+        final onay = k['onay_durumu']?.toString().toLowerCase();
+        final ilceEslesiyor = k['ilce_id']?.toString() == _ilceId;
+        return (onay == 'onaylandı' || onay == 'onaylandi') && ilceEslesiyor;
+      }).toList();
 
   Map<String, dynamic>? _birimBul(String? id) {
     if (id == null) return null;
@@ -121,8 +155,9 @@ class _FaaliyetFormuState extends State<_FaaliyetFormu> {
   }
 
   String? _adlaBul(List<Map<String, dynamic>> liste, dynamic ad) {
+    final aranan = ad.toString().replaceAll(' Başkanı', '').trim();
     for (final b in liste) {
-      if (b['ad'] == ad) return b['id'].toString();
+      if (b['temiz_ad'] == aranan || b['ad'] == ad) return b['id'].toString();
     }
     return null;
   }
@@ -184,7 +219,7 @@ class _FaaliyetFormuState extends State<_FaaliyetFormu> {
       _ilceId = v == 'il' ? null : v;
       _sorumluId = null;
       _hedefId = null;
-      _kisiId = null;
+      _kisiId = null; // İlçe değişince kişi seçimi sıfırlanır
     });
   }
 
@@ -247,15 +282,33 @@ class _FaaliyetFormuState extends State<_FaaliyetFormu> {
       bildir(context, 'Lütfen Sorumlu Birim seçiniz!', renk: Colors.orange);
       return;
     }
-    final sorumlu = _birimBul(_sorumluId);
-    final sorumluAd = sorumlu?['ad']?.toString() ?? widget.yetki.birimAdi;
+
+    String sorumluAd = widget.yetki.birimAdi;
+    if (_sorumluId != null) {
+      final secilenSorumlu = _sorumluListesi
+          .where((b) => b['id'].toString() == _sorumluId)
+          .firstOrNull;
+      if (secilenSorumlu != null) {
+        sorumluAd = secilenSorumlu['temiz_ad']?.toString() ??
+            secilenSorumlu['ad'].toString();
+      }
+    }
+
     if (sorumluAd.isEmpty) {
       bildir(context,
           'Biriminiz tanımlı değil. Yöneticinizden birim ataması isteyin.',
           renk: Colors.orange);
       return;
     }
-    final hedef = _birimBul(_hedefId)!;
+
+    final secilenHedef = _komisyonListesi
+        .where((b) => b['id'].toString() == _hedefId)
+        .firstOrNull;
+    final hedefAd = secilenHedef != null
+        ? (secilenHedef['temiz_ad']?.toString() ??
+            secilenHedef['ad'].toString())
+        : '';
+
     final kisi =
         widget.kisiler.where((k) => k['id'].toString() == _kisiId).firstOrNull;
 
@@ -269,13 +322,12 @@ class _FaaliyetFormuState extends State<_FaaliyetFormu> {
       'atanan_kisi_id': _kisiId,
       'sorumlu_kisi_ad': kisi == null ? '' : tamAdGetir(kisi),
       'hedef_birim_id': _hedefId,
-      'hedef_birim': hedef['ad'],
-      'sorumlu_birim_id': sorumlu?['id'],
+      'hedef_birim': hedefAd,
+      'sorumlu_birim_id': _sorumluId ?? widget.yetki.birimId,
       'olusturan_unvan': sorumluAd,
       'ilce_id': _ilceId,
     };
 
-    // ONAY DURUMU YÖNETİMİ
     if (widget.mevcut == null) {
       veri['atayan_ad'] = widget.yetki.atayanEtiketi;
       veri['kategori'] = 'Genel';
@@ -310,22 +362,9 @@ class _FaaliyetFormuState extends State<_FaaliyetFormu> {
     required String? deger,
     required ValueChanged<String?> onChanged,
   }) {
-    // Çökme Koruması: Listeyi benzersiz hale getir (Aynı isimli olanları temizle)
-    final zirhliListe = <String, Map<String, dynamic>>{};
-    for (final b in liste) {
-      final id = b['id']?.toString();
-      final ad = b['ad']?.toString();
-      if (id != null && ad != null) {
-        if (!zirhliListe.values.any((item) => item['ad'] == ad)) {
-          zirhliListe[id] = b;
-        }
-      }
-    }
-    final temizListe = zirhliListe.values.toList();
-
-    // Çökme Koruması 2: Değer listede yoksa null olarak kabul et
     String? guvenliDeger = deger;
-    if (guvenliDeger != null && !zirhliListe.containsKey(guvenliDeger)) {
+    if (guvenliDeger != null &&
+        !liste.any((b) => b['id'].toString() == guvenliDeger)) {
       guvenliDeger = null;
     }
 
@@ -336,10 +375,11 @@ class _FaaliyetFormuState extends State<_FaaliyetFormu> {
       dropdownColor: AppColors.inputFill,
       style: const TextStyle(color: Colors.white),
       decoration: koyuInput(label: label, icon: icon),
-      items: temizListe
+      items: liste
           .map((b) => DropdownMenuItem<String>(
               value: b['id'].toString(),
-              child: Text(b['ad'].toString(), overflow: TextOverflow.ellipsis)))
+              child: Text(b['temiz_ad'].toString(),
+                  overflow: TextOverflow.ellipsis)))
           .toList(),
       onChanged: onChanged,
     );

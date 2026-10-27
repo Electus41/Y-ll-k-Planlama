@@ -8,39 +8,49 @@ class FaaliyetServisi {
       required Map<String, dynamic> veri}) async {
     try {
       if (mevcut == null) {
+        // 1. Veritabanına kaydet
         await supabase.from('faaliyetler').insert(veri);
 
-        // EĞER ONAYLIYSA VE KİŞİ ATANMIŞSA ANINDA BİLDİRİM GÖNDER
+        // 2. Bildirim gönder (Hata verirse ana işlemi durdurmaz)
         if (veri['onay_durumu'] != 'Bekliyor' &&
             veri['atanan_kisi_id'] != null) {
-          await supabase.functions.invoke(
-            'gorev-bildirimi',
-            body: {
-              'hedefKullaniciId': veri['atanan_kisi_id'],
-              'faaliyetBaslik': veri['baslik'],
-              'tarih': veri['tarih'],
-              'birim': veri['hedef_birim'] ?? 'Genel',
-              'baslik': '📢 Yeni Bir Görev Atandı!'
-            },
-          );
+          try {
+            await supabase.functions.invoke(
+              'gorev-bildirimi',
+              body: {
+                'hedefKullaniciId': veri['atanan_kisi_id'],
+                'faaliyetBaslik': veri['baslik'],
+                'tarih': veri['tarih'],
+                'birim': veri['hedef_birim'] ?? 'Genel',
+                'baslik': '📢 Yeni Bir Görev Atandı!'
+              },
+            );
+          } catch (e) {
+            debugPrint('Bildirim fonksiyonu tetiklenemedi: $e');
+          }
         }
       } else {
+        // 1. Veritabanını güncelle
         await supabase.from('faaliyetler').update(veri).eq('id', mevcut['id']);
 
-        // GÖREV BAŞKA BİRİNE DEVREDİLDİYSE VEYA YENİ ONAYLANDIYSA BİLDİRİM GÖNDER
+        // 2. Devir bildirimi gönder (Hata verirse ana işlemi durdurmaz)
         if (veri['onay_durumu'] != 'Bekliyor' &&
             veri['atanan_kisi_id'] != null &&
             mevcut['atanan_kisi_id'] != veri['atanan_kisi_id']) {
-          await supabase.functions.invoke(
-            'gorev-bildirimi',
-            body: {
-              'hedefKullaniciId': veri['atanan_kisi_id'],
-              'faaliyetBaslik': veri['baslik'],
-              'tarih': veri['tarih'],
-              'birim': veri['hedef_birim'] ?? 'Genel',
-              'baslik': '🔄 Görev Size Devredildi / Onaylandı'
-            },
-          );
+          try {
+            await supabase.functions.invoke(
+              'gorev-bildirimi',
+              body: {
+                'hedefKullaniciId': veri['atanan_kisi_id'],
+                'faaliyetBaslik': veri['baslik'],
+                'tarih': veri['tarih'],
+                'birim': veri['hedef_birim'] ?? 'Genel',
+                'baslik': '🔄 Görev Size Devredildi / Onaylandı'
+              },
+            );
+          } catch (e) {
+            debugPrint('Bildirim fonksiyonu tetiklenemedi: $e');
+          }
         }
       }
       return true;
@@ -52,17 +62,19 @@ class FaaliyetServisi {
     }
   }
 
-  static Future<void> sil(BuildContext context, Map<String, dynamic> f) async {
+  static Future<bool> sil(BuildContext context, Map<String, dynamic> f) async {
     final onay = await onayDialogu(context,
         baslik: 'Faaliyeti Sil',
         mesaj: '"${f['baslik']}" silinecek. Onaylıyor musunuz?');
-    if (!onay) return;
+    if (!onay) return false;
     try {
       await supabase.from('faaliyetler').delete().eq('id', f['id']);
       if (context.mounted) bildir(context, 'Faaliyet başarıyla silindi.');
+      return true;
     } catch (e) {
       debugPrint('Faaliyet silinemedi: $e');
       if (context.mounted) bildir(context, 'Silinemedi.', renk: Colors.red);
+      return false;
     }
   }
 
